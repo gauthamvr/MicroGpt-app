@@ -1,11 +1,10 @@
-// ---------------------
 // server.js
-// ---------------------
+
 require('dotenv').config(); // Loads .env variables like DATABASE_URL, CLERK_SECRET_KEY, etc.
 const express = require('express');
 const cors = require('cors');
 const { pool, initDB } = require('./db');
-
+initDB();
 const app = express();
 
 // Let’s allow cross-origin requests:
@@ -15,7 +14,7 @@ app.use(cors());
 app.use(express.json());
 
 // -----------------------------------------
-// NEW ROUTE: POST /users
+// POST /users
 // For creating user records in the DB
 // -----------------------------------------
 app.post('/users', async (req, res) => {
@@ -49,7 +48,7 @@ app.post('/users', async (req, res) => {
 app.get('/publicCharacters', async (req, res) => {
   try {
     const sortBy = req.query.sortBy;
-    let orderColumn = 'likes_count'; // default
+    let orderColumn = 'likes_count'; // default is sorting by likes
 
     if (sortBy === 'downloads') {
       orderColumn = 'downloads_count';
@@ -79,7 +78,7 @@ app.post('/publicCharacters', async (req, res) => {
       id, // If present, update
       clerkId,
       name,
-      subtitle = '', // optional
+      subtitle = '',
       description,
       conversationStyle,
       modelName,
@@ -184,9 +183,9 @@ app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
 
     // Check if user already liked
     const findLikeQuery = `
-      SELECT * FROM user_likes
-      WHERE user_clerk_id = $1 AND character_id = $2
-      LIMIT 1
+        SELECT * FROM user_likes
+        WHERE user_clerk_id = $1 AND character_id = $2
+            LIMIT 1
     `;
     const { rows: likeRows } = await pool.query(findLikeQuery, [
       userClerkId,
@@ -270,16 +269,41 @@ app.get('/liked-characters/:userClerkId', async (req, res) => {
     }
 
     const query = `
-      SELECT c.*
-      FROM public_characters c
-      JOIN user_likes ul ON c.id = ul.character_id
-      WHERE ul.user_clerk_id = $1
-      ORDER BY c.likes_count DESC
+        SELECT c.*
+        FROM public_characters c
+                 JOIN user_likes ul ON c.id = ul.character_id
+        WHERE ul.user_clerk_id = $1
+        ORDER BY c.likes_count DESC
     `;
     const { rows } = await pool.query(query, [userClerkId]);
     return res.json({ data: rows });
   } catch (error) {
     console.error('Error fetching liked characters:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// -----------------------------------------
+// NEW ROUTE: GET /publishedCharacters/:clerkId
+// Returns all public_characters belonging to a specific clerkId
+// -----------------------------------------
+app.get('/publishedCharacters/:clerkId', async (req, res) => {
+  try {
+    const { clerkId } = req.params;
+    if (!clerkId) {
+      return res.status(400).json({ error: 'Missing clerkId param.' });
+    }
+
+    const query = `
+        SELECT *
+        FROM public_characters
+        WHERE clerk_id = $1
+        ORDER BY updated_at DESC
+    `;
+    const { rows } = await pool.query(query, [clerkId]);
+    return res.json({ data: rows });
+  } catch (error) {
+    console.error('Error fetching published characters by clerkId:', error);
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
