@@ -1,37 +1,34 @@
-// server.js
-
-require('dotenv').config(); // Loads .env variables like DATABASE_URL, CLERK_SECRET_KEY, etc.
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { pool, initDB } = require('./db');
 initDB();
+
 const app = express();
-
-// Let’s allow cross-origin requests:
 app.use(cors());
-
-// Enable JSON body parsing:
 app.use(express.json());
 
-// -----------------------------------------
+// --------------------------------------------------------------------
 // POST /users
-// For creating user records in the DB
-// -----------------------------------------
+// Creates a user row with (name, email, clerk_id, username, display_name).
+// We require username/displayName (front-end is always sending them).
+// --------------------------------------------------------------------
 app.post('/users', async (req, res) => {
   try {
-    const { name, email, clerkId } = req.body;
+    const { name, email, clerkId, username, displayName } = req.body;
 
-    if (!name || !email || !clerkId) {
+    // Must have all 5 fields
+    if (!name || !email || !clerkId || !username || !displayName) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
     // Insert user into "users" table
     const query = `
-      INSERT INTO users (name, email, clerk_id)
-      VALUES ($1, $2, $3)
-      RETURNING *;
+        INSERT INTO users (name, email, clerk_id, username, display_name)
+        VALUES ($1, $2, $3, $4, $5)
+            RETURNING *;
     `;
-    const values = [name, email, clerkId];
+    const values = [name, email, clerkId, username, displayName];
     const result = await pool.query(query, values);
 
     return res.status(201).json({ data: result.rows });
@@ -41,24 +38,272 @@ app.post('/users', async (req, res) => {
   }
 });
 
-// -----------------------------------------
+// --------------------------------------------------------------------
+// PATCH /users/:clerkId
+// Allows updating advanced fields like username, display_name, bio, is_pro
+// (If you don't want them to change username, remove that field here.)
+// --------------------------------------------------------------------
+app.patch('/users/:clerkId', async (req, res) => {
+  try {
+    const { clerkId } = req.params;
+    if (!clerkId) {
+      return res.status(400).json({ error: 'Missing clerkId param.' });
+    }
+
+    const { username, display_name, bio, is_pro } = req.body;
+    let setClauses = [];
+    let values = [];
+    let idx = 1;
+
+    if (username !== undefined) {
+      setClauses.push(`username = $${idx++}`);
+      values.push(username);
+    }
+    if (display_name !== undefined) {
+      setClauses.push(`display_name = $${idx++}`);
+      values.push(display_name);
+    }
+    if (bio !== undefined) {
+      setClauses.push(`bio = $${idx++}`);
+      values.push(bio);
+    }
+    if (is_pro !== undefined) {
+      setClauses.push(`is_pro = $${idx++}`);
+      values.push(is_pro);
+    }
+
+    if (setClauses.length === 0) {
+      return res
+        .status(400)
+        .json({ error: 'No valid fields provided to update.' });
+    }
+
+    const setClause = setClauses.join(', ');
+    const updateQuery = `
+        UPDATE users
+        SET ${setClause}
+        WHERE clerk_id = $${idx}
+            RETURNING *;
+    `;
+    values.push(clerkId);
+
+    let result;
+    try {
+      result = await pool.query(updateQuery, values);
+    } catch (error) {
+      // If there's a unique constraint on username or email, handle it
+      if (error.code === '23505') {
+        return res
+          .status(409)
+          .json({ error: 'That username or email is already taken.' });
+      }
+      throw error;
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// --------------------------------------------------------------------
+// GET /users/clerkId/:clerkId
+// Fetch user details by clerk_id
+// --------------------------------------------------------------------
+app.get('/users/clerkId/:clerkId', async (req, res) => {
+  try {
+    const { clerkId } = req.params;
+    if (!clerkId) {
+      return res.status(400).json({ error: 'Missing clerkId param.' });
+    }
+
+    const query = `
+        SELECT *
+        FROM users
+        WHERE clerk_id = $1
+            LIMIT 1;
+    `;
+    const { rows } = await pool.query(query, [clerkId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ data: rows[0] });
+  } catch (error) {
+    console.error('Error fetching user by clerkId:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// --------------------------------------------------------------------
+// GET /users/username/:username
+// Return user + array of that user's public_characters
+// --------------------------------------------------------------------
+app.get('/users/username/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    if (!username) {
+      return res.status(400).json({ error: 'Missing username param.' });
+    }
+
+    const query = `
+        SELECT
+            u.id AS user_id,
+            u.clerk_id,
+            u.username,
+            u.display_name,
+            u.bio,
+            u.user_likes_count,
+            u.is_pro,
+            json_agg(
+                    json_build_object(
+                            'id', c.id,
+                            'clerk_id', c.clerk_id,
+                            'name', c.name,
+                            'subtitle', c.subtitle,
+                            'description', c.description,
+                            'conversation_style', c.conversation_style,
+                            'model_name', c.model_name,
+                            'likes_count', c.likes_count,
+                            'downloads_count', c.downloads_count
+                    )
+            ) FILTER (WHERE c.id IS NOT NULL) AS characters
+        FROM users u
+                 LEFT JOIN public_characters c ON c.clerk_id = u.clerk_id
+        WHERE u.username = $1
+        GROUP BY u.id;
+    `;
+    const { rows } = await pool.query(query, [username]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userRow = rows[0];
+    if (
+      userRow.characters &&
+      userRow.characters.length === 1 &&
+      userRow.characters[0] === null
+    ) {
+      userRow.characters = [];
+    }
+
+    res.json({ data: userRow });
+  } catch (error) {
+    console.error('Error fetching user by username:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// --------------------------------------------------------------------
+// POST /users/:username/toggle-like
+// Toggle a "like" on the user with that username
+// (NOT for liking characters; for user-likes.)
+// --------------------------------------------------------------------
+app.post('/users/:username/toggle-like', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { userClerkId } = req.body; // who is liking/unliking
+    if (!username || !userClerkId) {
+      return res
+        .status(400)
+        .json({ error: 'Missing username or userClerkId in body.' });
+    }
+
+    // 1) Find the user being liked
+    const findUserQuery = `
+        SELECT id, user_likes_count
+        FROM users
+        WHERE username = $1
+            LIMIT 1;
+    `;
+    const { rows: userRows } = await pool.query(findUserQuery, [username]);
+    if (userRows.length === 0) {
+      return res
+        .status(404)
+        .json({ error: 'No user found with that username.' });
+    }
+    const likedUserId = userRows[0].id;
+
+    // 2) Check if the (liker) already liked them
+    const findLikeQuery = `
+        SELECT *
+        FROM user_likes_users
+        WHERE liked_user_id = $1 AND user_clerk_id = $2
+            LIMIT 1;
+    `;
+    const { rows: likeRows } = await pool.query(findLikeQuery, [
+      likedUserId,
+      userClerkId,
+    ]);
+
+    let liked;
+    let updatedUserRow;
+    if (likeRows.length === 0) {
+      // Not liked -> Insert row
+      const insertLike = `
+          INSERT INTO user_likes_users (liked_user_id, user_clerk_id)
+          VALUES ($1, $2);
+      `;
+      await pool.query(insertLike, [likedUserId, userClerkId]);
+
+      // Increment user_likes_count
+      const updateLikes = `
+          UPDATE users
+          SET user_likes_count = user_likes_count + 1
+          WHERE id = $1
+              RETURNING *;
+      `;
+      const { rows } = await pool.query(updateLikes, [likedUserId]);
+      updatedUserRow = rows[0];
+      liked = true;
+    } else {
+      // Already liked -> remove
+      const removeLike = `
+          DELETE FROM user_likes_users
+          WHERE liked_user_id = $1 AND user_clerk_id = $2;
+      `;
+      await pool.query(removeLike, [likedUserId, userClerkId]);
+
+      // Decrement
+      const updateLikes = `
+          UPDATE users
+          SET user_likes_count = GREATEST(user_likes_count - 1, 0)
+          WHERE id = $1
+              RETURNING *;
+      `;
+      const { rows } = await pool.query(updateLikes, [likedUserId]);
+      updatedUserRow = rows[0];
+      liked = false;
+    }
+
+    res.json({ data: updatedUserRow, liked });
+  } catch (error) {
+    console.error('Error toggling like on user:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// --------------------------------------------------------------------
 // GET /publicCharacters?sortBy=likes or downloads
-// Returns top 20 public characters
-// -----------------------------------------
+// Returns top 20 public characters, including the user's username
+// --------------------------------------------------------------------
 app.get('/publicCharacters', async (req, res) => {
   try {
     const sortBy = req.query.sortBy;
     let orderColumn = 'likes_count'; // default is sorting by likes
-
     if (sortBy === 'downloads') {
       orderColumn = 'downloads_count';
     }
 
     const query = `
-      SELECT *
-      FROM public_characters
-      ORDER BY ${orderColumn} DESC
-      LIMIT 20
+        SELECT pc.*, u.username
+        FROM public_characters pc
+                 LEFT JOIN users u ON pc.clerk_id = u.clerk_id
+        ORDER BY ${orderColumn} DESC
+            LIMIT 20;
     `;
     const { rows } = await pool.query(query);
     return res.json({ data: rows });
@@ -68,10 +313,10 @@ app.get('/publicCharacters', async (req, res) => {
   }
 });
 
-// -----------------------------------------
+// --------------------------------------------------------------------
 // POST /publicCharacters
 // Create or update a character
-// -----------------------------------------
+// --------------------------------------------------------------------
 app.post('/publicCharacters', async (req, res) => {
   try {
     const {
@@ -92,16 +337,16 @@ app.post('/publicCharacters', async (req, res) => {
     if (id) {
       // Update existing
       const updateQuery = `
-        UPDATE public_characters
-        SET
-          name = $1,
-          subtitle = $2,
-          description = $3,
-          conversation_style = $4,
-          model_name = $5,
-          updated_at = NOW()
-        WHERE id = $6
-        RETURNING *;
+          UPDATE public_characters
+          SET
+              name = $1,
+              subtitle = $2,
+              description = $3,
+              conversation_style = $4,
+              model_name = $5,
+              updated_at = NOW()
+          WHERE id = $6
+              RETURNING *;
       `;
       const values = [
         name,
@@ -116,15 +361,15 @@ app.post('/publicCharacters', async (req, res) => {
     } else {
       // Create new
       const insertQuery = `
-        INSERT INTO public_characters (
-          clerk_id,
-          name,
-          subtitle,
-          description,
-          conversation_style,
-          model_name
-        ) VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *;
+          INSERT INTO public_characters (
+              clerk_id,
+              name,
+              subtitle,
+              description,
+              conversation_style,
+              model_name
+          ) VALUES ($1, $2, $3, $4, $5, $6)
+              RETURNING *;
       `;
       const values = [
         clerkId,
@@ -143,10 +388,10 @@ app.post('/publicCharacters', async (req, res) => {
   }
 });
 
-// -----------------------------------------
+// --------------------------------------------------------------------
 // DELETE /publicCharacters/:id
 // Delete a public character by ID
-// -----------------------------------------
+// --------------------------------------------------------------------
 app.delete('/publicCharacters/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -155,9 +400,9 @@ app.delete('/publicCharacters/:id', async (req, res) => {
     }
 
     const deleteQuery = `
-      DELETE FROM public_characters
-      WHERE id = $1
-      RETURNING *;
+        DELETE FROM public_characters
+        WHERE id = $1
+            RETURNING *;
     `;
     const { rows } = await pool.query(deleteQuery, [id]);
     return res.status(200).json({ data: rows });
@@ -167,10 +412,10 @@ app.delete('/publicCharacters/:id', async (req, res) => {
   }
 });
 
-// -----------------------------------------
+// --------------------------------------------------------------------
 // POST /publicCharacters/:id/toggle-like
-// Toggle a user's like on a character
-// -----------------------------------------
+// Toggle a user's "like" on a *character* (restored from the old server)
+// --------------------------------------------------------------------
 app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
   try {
     const { id } = req.params;
@@ -181,11 +426,12 @@ app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
         .json({ error: 'Missing character id or userClerkId.' });
     }
 
-    // Check if user already liked
+    // 1) Check if user already liked this character
     const findLikeQuery = `
-        SELECT * FROM user_likes
-        WHERE user_clerk_id = $1 AND character_id = $2
-            LIMIT 1
+      SELECT * 
+      FROM user_likes
+      WHERE user_clerk_id = $1 AND character_id = $2
+      LIMIT 1;
     `;
     const { rows: likeRows } = await pool.query(findLikeQuery, [
       userClerkId,
@@ -196,7 +442,7 @@ app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
       // Not liked -> Insert
       const insertLike = `
         INSERT INTO user_likes (user_clerk_id, character_id)
-        VALUES ($1, $2)
+        VALUES ($1, $2);
       `;
       await pool.query(insertLike, [userClerkId, id]);
 
@@ -213,11 +459,11 @@ app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
       // Already liked -> Remove it
       const removeLike = `
         DELETE FROM user_likes
-        WHERE user_clerk_id = $1 AND character_id = $2
+        WHERE user_clerk_id = $1 AND character_id = $2;
       `;
       await pool.query(removeLike, [userClerkId, id]);
 
-      // Decrement likes_count
+      // Decrement
       const updateLikesQuery = `
         UPDATE public_characters
         SET likes_count = GREATEST(likes_count - 1, 0)
@@ -233,18 +479,18 @@ app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
   }
 });
 
-// -----------------------------------------
+// --------------------------------------------------------------------
 // POST /publicCharacters/:id/increment-download
 // Increments the download counter by 1
-// -----------------------------------------
+// --------------------------------------------------------------------
 app.post('/publicCharacters/:id/increment-download', async (req, res) => {
   try {
     const { id } = req.params;
     const updateDownloadsQuery = `
-      UPDATE public_characters
-      SET downloads_count = downloads_count + 1
-      WHERE id = $1
-      RETURNING *;
+        UPDATE public_characters
+        SET downloads_count = downloads_count + 1
+        WHERE id = $1
+            RETURNING *;
     `;
     const { rows } = await pool.query(updateDownloadsQuery, [id]);
     if (rows.length === 0) {
@@ -257,10 +503,10 @@ app.post('/publicCharacters/:id/increment-download', async (req, res) => {
   }
 });
 
-// -----------------------------------------
+// --------------------------------------------------------------------
 // GET /liked-characters/:userClerkId
 // Returns all public_characters that user has liked
-// -----------------------------------------
+// --------------------------------------------------------------------
 app.get('/liked-characters/:userClerkId', async (req, res) => {
   try {
     const { userClerkId } = req.params;
@@ -283,10 +529,10 @@ app.get('/liked-characters/:userClerkId', async (req, res) => {
   }
 });
 
-// -----------------------------------------
-// NEW ROUTE: GET /publishedCharacters/:clerkId
+// --------------------------------------------------------------------
+// GET /publishedCharacters/:clerkId
 // Returns all public_characters belonging to a specific clerkId
-// -----------------------------------------
+// --------------------------------------------------------------------
 app.get('/publishedCharacters/:clerkId', async (req, res) => {
   try {
     const { clerkId } = req.params;
@@ -295,10 +541,10 @@ app.get('/publishedCharacters/:clerkId', async (req, res) => {
     }
 
     const query = `
-        SELECT *
-        FROM public_characters
-        WHERE clerk_id = $1
-        ORDER BY updated_at DESC
+      SELECT *
+      FROM public_characters
+      WHERE clerk_id = $1
+      ORDER BY updated_at DESC
     `;
     const { rows } = await pool.query(query, [clerkId]);
     return res.json({ data: rows });
@@ -308,7 +554,9 @@ app.get('/publishedCharacters/:clerkId', async (req, res) => {
   }
 });
 
+// --------------------------------------------------------------------
 // Start the server
+// --------------------------------------------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Express server running on port ${port}...`);
