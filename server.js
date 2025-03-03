@@ -157,42 +157,42 @@ app.get('/users/username/:username', async (req, res) => {
 
     // We'll pass $2 as the viewer's clerkId if present, otherwise null
     const sql = `
-      SELECT
-        u.id AS user_id,
-        u.clerk_id,
-        u.username,
-        u.display_name,
-        u.bio,
-        u.user_likes_count,
-        u.is_pro,
+        SELECT
+            u.id AS user_id,
+            u.clerk_id,
+            u.username,
+            u.display_name,
+            u.bio,
+            u.user_likes_count,
+            u.is_pro,
 
-        -- If user_likes_users row is found, then the viewer is considered to have liked
-        CASE WHEN ul.user_clerk_id IS NOT NULL THEN true ELSE false END AS liked_by_current_user,
+            -- If user_likes_users row is found, then the viewer is considered to have liked
+            CASE WHEN ul.user_clerk_id IS NOT NULL THEN true ELSE false END AS liked_by_current_user,
 
-        json_agg(
-          json_build_object(
-            'id', c.id,
-            'clerk_id', c.clerk_id,
-            'name', c.name,
-            'subtitle', c.subtitle,
-            'description', c.description,
-            'conversation_style', c.conversation_style,
-            'model_name', c.model_name,
-            'likes_count', c.likes_count,
-            'downloads_count', c.downloads_count
-          )
-        ) FILTER (WHERE c.id IS NOT NULL) AS characters
+            json_agg(
+                    json_build_object(
+                            'id', c.id,
+                            'clerk_id', c.clerk_id,
+                            'name', c.name,
+                            'subtitle', c.subtitle,
+                            'description', c.description,
+                            'conversation_style', c.conversation_style,
+                            'model_name', c.model_name,
+                            'likes_count', c.likes_count,
+                            'downloads_count', c.downloads_count
+                    )
+            ) FILTER (WHERE c.id IS NOT NULL) AS characters
 
-      FROM users u
-      LEFT JOIN public_characters c
-        ON c.clerk_id = u.clerk_id
-      -- Join user_likes_users to see if the viewer has liked them
-      LEFT JOIN user_likes_users ul
-        ON ul.liked_user_id = u.id
-        AND ul.user_clerk_id = $2
+        FROM users u
+                 LEFT JOIN public_characters c
+                           ON c.clerk_id = u.clerk_id
+            -- Join user_likes_users to see if the viewer has liked them
+                 LEFT JOIN user_likes_users ul
+                           ON ul.liked_user_id = u.id
+                               AND ul.user_clerk_id = $2
 
-      WHERE u.username = $1
-      GROUP BY u.id, ul.user_clerk_id;
+        WHERE u.username = $1
+        GROUP BY u.id, ul.user_clerk_id;
     `;
 
     const { rows } = await pool.query(sql, [username, viewerClerkId || null]);
@@ -236,10 +236,10 @@ app.post('/users/:username/toggle-like', async (req, res) => {
 
     // 1) Find the user being liked
     const findUserQuery = `
-      SELECT id, user_likes_count
-      FROM users
-      WHERE username = $1
-      LIMIT 1;
+        SELECT id, user_likes_count
+        FROM users
+        WHERE username = $1
+            LIMIT 1;
     `;
     const { rows: userRows } = await pool.query(findUserQuery, [username]);
     if (userRows.length === 0) {
@@ -251,10 +251,10 @@ app.post('/users/:username/toggle-like', async (req, res) => {
 
     // 2) Check if the (liker) already liked them
     const findLikeQuery = `
-      SELECT *
-      FROM user_likes_users
-      WHERE liked_user_id = $1 AND user_clerk_id = $2
-      LIMIT 1;
+        SELECT *
+        FROM user_likes_users
+        WHERE liked_user_id = $1 AND user_clerk_id = $2
+            LIMIT 1;
     `;
     const { rows: likeRows } = await pool.query(findLikeQuery, [
       likedUserId,
@@ -266,17 +266,17 @@ app.post('/users/:username/toggle-like', async (req, res) => {
     if (likeRows.length === 0) {
       // Not liked -> Insert row
       const insertLike = `
-        INSERT INTO user_likes_users (liked_user_id, user_clerk_id)
-        VALUES ($1, $2);
+          INSERT INTO user_likes_users (liked_user_id, user_clerk_id)
+          VALUES ($1, $2);
       `;
       await pool.query(insertLike, [likedUserId, userClerkId]);
 
       // Increment user_likes_count
       const updateLikes = `
-        UPDATE users
-        SET user_likes_count = user_likes_count + 1
-        WHERE id = $1
-        RETURNING *;
+          UPDATE users
+          SET user_likes_count = user_likes_count + 1
+          WHERE id = $1
+              RETURNING *;
       `;
       const { rows } = await pool.query(updateLikes, [likedUserId]);
       updatedUserRow = rows[0];
@@ -284,17 +284,17 @@ app.post('/users/:username/toggle-like', async (req, res) => {
     } else {
       // Already liked -> remove
       const removeLike = `
-        DELETE FROM user_likes_users
-        WHERE liked_user_id = $1 AND user_clerk_id = $2;
+          DELETE FROM user_likes_users
+          WHERE liked_user_id = $1 AND user_clerk_id = $2;
       `;
       await pool.query(removeLike, [likedUserId, userClerkId]);
 
       // Decrement
       const updateLikes = `
-        UPDATE users
-        SET user_likes_count = GREATEST(user_likes_count - 1, 0)
-        WHERE id = $1
-        RETURNING *;
+          UPDATE users
+          SET user_likes_count = GREATEST(user_likes_count - 1, 0)
+          WHERE id = $1
+              RETURNING *;
       `;
       const { rows } = await pool.query(updateLikes, [likedUserId]);
       updatedUserRow = rows[0];
@@ -310,7 +310,7 @@ app.post('/users/:username/toggle-like', async (req, res) => {
 
 // --------------------------------------------------------------------
 // GET /publicCharacters?sortBy=likes or downloads
-// Returns top 20 public characters, including the user's username
+// Returns top 20 public characters, including the user's username and pro status
 // --------------------------------------------------------------------
 app.get('/publicCharacters', async (req, res) => {
   try {
@@ -321,11 +321,11 @@ app.get('/publicCharacters', async (req, res) => {
     }
 
     const query = `
-      SELECT pc.*, u.username
-      FROM public_characters pc
-      LEFT JOIN users u ON pc.clerk_id = u.clerk_id
-      ORDER BY ${orderColumn} DESC
-      LIMIT 20;
+        SELECT pc.*, u.username, u.is_pro
+        FROM public_characters pc
+                 LEFT JOIN users u ON pc.clerk_id = u.clerk_id
+        ORDER BY ${orderColumn} DESC
+            LIMIT 20;
     `;
     const { rows } = await pool.query(query);
     return res.json({ data: rows });
@@ -359,16 +359,16 @@ app.post('/publicCharacters', async (req, res) => {
     if (id) {
       // Update existing
       const updateQuery = `
-        UPDATE public_characters
-        SET
-          name = $1,
-          subtitle = $2,
-          description = $3,
-          conversation_style = $4,
-          model_name = $5,
-          updated_at = NOW()
-        WHERE id = $6
-        RETURNING *;
+          UPDATE public_characters
+          SET
+              name = $1,
+              subtitle = $2,
+              description = $3,
+              conversation_style = $4,
+              model_name = $5,
+              updated_at = NOW()
+          WHERE id = $6
+              RETURNING *;
       `;
       const values = [
         name,
@@ -383,15 +383,15 @@ app.post('/publicCharacters', async (req, res) => {
     } else {
       // Create new
       const insertQuery = `
-        INSERT INTO public_characters (
-          clerk_id,
-          name,
-          subtitle,
-          description,
-          conversation_style,
-          model_name
-        ) VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *;
+          INSERT INTO public_characters (
+              clerk_id,
+              name,
+              subtitle,
+              description,
+              conversation_style,
+              model_name
+          ) VALUES ($1, $2, $3, $4, $5, $6)
+              RETURNING *;
       `;
       const values = [
         clerkId,
@@ -422,9 +422,9 @@ app.delete('/publicCharacters/:id', async (req, res) => {
     }
 
     const deleteQuery = `
-      DELETE FROM public_characters
-      WHERE id = $1
-      RETURNING *;
+        DELETE FROM public_characters
+        WHERE id = $1
+            RETURNING *;
     `;
     const { rows } = await pool.query(deleteQuery, [id]);
     return res.status(200).json({ data: rows });
@@ -450,10 +450,10 @@ app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
 
     // 1) Check if user already liked this character
     const findLikeQuery = `
-      SELECT * 
-      FROM user_likes
-      WHERE user_clerk_id = $1 AND character_id = $2
-      LIMIT 1;
+        SELECT *
+        FROM user_likes
+        WHERE user_clerk_id = $1 AND character_id = $2
+            LIMIT 1;
     `;
     const { rows: likeRows } = await pool.query(findLikeQuery, [
       userClerkId,
@@ -463,34 +463,34 @@ app.post('/publicCharacters/:id/toggle-like', async (req, res) => {
     if (likeRows.length === 0) {
       // Not liked -> Insert
       const insertLike = `
-        INSERT INTO user_likes (user_clerk_id, character_id)
-        VALUES ($1, $2);
+          INSERT INTO user_likes (user_clerk_id, character_id)
+          VALUES ($1, $2);
       `;
       await pool.query(insertLike, [userClerkId, id]);
 
       // Increment likes_count
       const updateLikesQuery = `
-        UPDATE public_characters
-        SET likes_count = likes_count + 1
-        WHERE id = $1
-        RETURNING *;
+          UPDATE public_characters
+          SET likes_count = likes_count + 1
+          WHERE id = $1
+              RETURNING *;
       `;
       const { rows: updatedChar } = await pool.query(updateLikesQuery, [id]);
       return res.json({ data: updatedChar[0], liked: true });
     } else {
       // Already liked -> Remove it
       const removeLike = `
-        DELETE FROM user_likes
-        WHERE user_clerk_id = $1 AND character_id = $2;
+          DELETE FROM user_likes
+          WHERE user_clerk_id = $1 AND character_id = $2;
       `;
       await pool.query(removeLike, [userClerkId, id]);
 
       // Decrement
       const updateLikesQuery = `
-        UPDATE public_characters
-        SET likes_count = GREATEST(likes_count - 1, 0)
-        WHERE id = $1
-        RETURNING *;
+          UPDATE public_characters
+          SET likes_count = GREATEST(likes_count - 1, 0)
+          WHERE id = $1
+              RETURNING *;
       `;
       const { rows: updatedChar } = await pool.query(updateLikesQuery, [id]);
       return res.json({ data: updatedChar[0], liked: false });
@@ -509,10 +509,10 @@ app.post('/publicCharacters/:id/increment-download', async (req, res) => {
   try {
     const { id } = req.params;
     const updateDownloadsQuery = `
-      UPDATE public_characters
-      SET downloads_count = downloads_count + 1
-      WHERE id = $1
-      RETURNING *;
+        UPDATE public_characters
+        SET downloads_count = downloads_count + 1
+        WHERE id = $1
+            RETURNING *;
     `;
     const { rows } = await pool.query(updateDownloadsQuery, [id]);
     if (rows.length === 0) {
