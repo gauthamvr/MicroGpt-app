@@ -1,7 +1,9 @@
+//server.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { pool, initDB } = require('./db');
+const path = require('path'); // <-- import 'path' for safety
 
 // Initialize database
 initDB();
@@ -9,6 +11,18 @@ initDB();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// 1) Serve static files in the 'public' folder
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 2) Optionally, create a route to serve privacy.html at /privacy
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
+});
+
+app.get('/account-deletion', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'account-deletion.html'));
+});
 
 // --------------------------------------------------------------------
 // POST /users
