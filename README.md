@@ -2,9 +2,7 @@
 Offline AI chat on your device. Private, customizable, and open source. Create unique AI characters and chat without needing the internet.
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
-To use this project for yourself, you may have to create a backend and database, preferably in Neondb.
 
-MicroGPT brings the power of AI offline chat right to your device. 
 ## Features
 - Offline AI Chat Anytime, Anywhere: Download or load small language models directly to your phone. Chat privately without needing a constant internet connection.
 - Create Unique AI Characters: Craft intelligent personalities with distinct traits. Share them with others or keep them for yourself—without exposing their inner logic.
