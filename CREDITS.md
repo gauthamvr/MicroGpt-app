@@ -1,6 +1,8 @@
 # Credits and third-party licenses
 
-MicroGPT's own source is MIT (see `LICENSE`). It stands on a lot of other
+MicroGPT's own source is MIT (see `LICENSE`). That licence covers the code
+in this repository only — third-party components vendored here or downloaded
+during setup keep their own licences, listed below. It stands on a lot of other
 people's work. This file records what comes from where, under which licence,
 and — importantly — **which pieces are not redistributed in this repository**
 because their licence does not permit it.
