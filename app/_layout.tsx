@@ -1,28 +1,28 @@
 // app/_layout.tsx
-import { ClerkLoaded, ClerkProvider } from '@clerk/clerk-expo';
+
+import React, { useEffect } from 'react';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
 import 'react-native-reanimated';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { View, LogBox } from 'react-native';
 import '../global.css';
-import { tokenCache } from '@/lib/auth';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from 'react-native';
+import { ThemedAlertProvider } from '@/components/ThemedAlert';
+import { SupabaseAuthProvider } from '@/lib/supabase';
+import { installLogCapture } from '@/lib/log-store';
 
-const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
+// Tee console.log/warn/error into a small in-memory ring buffer so
+// the user can share recent app output via Settings → View Logs.
+// Cheap (one push + occasional shift per console call), idempotent,
+// no behaviour change to the original console output.
+installLogCapture();
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-if (!publishableKey) {
-  throw new Error(
-    'Missing Publishable Key. Please set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in your .env'
-  );
-}
-
-LogBox.ignoreLogs(['Clerk:']);
+LogBox.ignoreLogs(['Supabase:']);
 
 export default function RootLayout() {
   const [loaded] = useFonts({
@@ -43,39 +43,38 @@ export default function RootLayout() {
     }
   }, [loaded]);
 
-  if (!loaded) {
-    return null;
-  }
+  if (!loaded) return null;
 
   return (
-    <ClerkProvider tokenCache={tokenCache} publishableKey={publishableKey}>
-      <ClerkLoaded>
-        {/* StatusBar is now transparent */}
-        <StatusBar
-          style={colorScheme === 'dark' ? 'light' : 'dark'}
-          translucent
-          backgroundColor="transparent"
-        />
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: colorScheme === 'dark' ? '#0D0D0D' : '#FCFCFC',
-          }}
-        >
-          <Stack
-            screenOptions={{
-              contentStyle: {
-                backgroundColor: colorScheme === 'dark' ? '#0D0D0D' : '#FCFCFC',
-              },
+    <SupabaseAuthProvider>
+      <SafeAreaProvider>
+        <ThemedAlertProvider>
+          <StatusBar
+            style={colorScheme === 'dark' ? 'light' : 'dark'}
+            translucent
+            backgroundColor="transparent"
+          />
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: colorScheme === 'dark' ? '#0D0D0D' : '#FCFCFC',
             }}
           >
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-            <Stack.Screen name="(root)" options={{ headerShown: false }} />
-            <Stack.Screen name="+not-found" />
-          </Stack>
-        </View>
-      </ClerkLoaded>
-    </ClerkProvider>
+            <Stack
+              screenOptions={{
+                contentStyle: {
+                  backgroundColor: colorScheme === 'dark' ? '#0D0D0D' : '#FCFCFC',
+                },
+              }}
+            >
+              <Stack.Screen name="index" options={{ headerShown: false }} />
+              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+              <Stack.Screen name="(root)" options={{ headerShown: false }} />
+              <Stack.Screen name="+not-found" />
+            </Stack>
+          </View>
+        </ThemedAlertProvider>
+      </SafeAreaProvider>
+    </SupabaseAuthProvider>
   );
 }

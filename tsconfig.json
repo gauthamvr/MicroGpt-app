@@ -5,6 +5,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "expo-download-manager": [
+        "./modules/expo-download-manager/src/index.ts"
+      ],
+      "expo-stable-diffusion": [
+        "./modules/expo-stable-diffusion/src/index.ts"
       ]
     }
   },

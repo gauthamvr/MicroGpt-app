@@ -1,21 +1,21 @@
 //app/(auth)/sign-in.tsx
-import { useSignIn } from '@clerk/clerk-expo';
 import { Link, router } from 'expo-router';
 import React, { useState, useEffect } from 'react';
-import { Alert, ScrollView, Text, View, useColorScheme } from 'react-native';
+import { ScrollView, Text, View, useColorScheme } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '@clerk/clerk-expo'; // <-- For session check
+import { themedAlert } from '@/components/ThemedAlert';
+import { useAuth } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 import CustomButton from '@/components/CustomButton';
 import InputField from '@/components/InputField';
 import OAuth from '@/components/OAuth';
 import { icons } from '@/constants';
 // --- Download-cancel store imports ---
-import { useStore } from '@/store'; // <-- ADD THIS
+import { useStore } from '@/store';
 
 export default function SignIn() {
-  const { signIn, setActive, isLoaded: isSignInLoaded } = useSignIn();
-  const { isLoaded: isAuthLoaded, isSignedIn } = useAuth(); // <-- Session state
+  const { isLoaded, isSignedIn } = useAuth();
   const colorScheme = useColorScheme();
   const placeholderColor = colorScheme === 'dark' ? '#E6E6E6' : '#666666';
 
@@ -24,29 +24,26 @@ export default function SignIn() {
     password: '',
   });
 
-  // --- Access store to cancel downloads if needed ---
-  const { isDownloading, downloadProgress, cancelDownload } = useStore(); // <-- ADD THIS
+  const isDownloading = useStore((s) => s.isDownloading);
+  const downloadProgress = useStore((s) => s.downloadProgress);
+  const cancelDownload = useStore((s) => s.cancelDownload);
 
   // If user is already signed in, skip the sign-in screen
   useEffect(() => {
-    if (isAuthLoaded && isSignedIn) {
+    if (isLoaded && isSignedIn) {
       router.replace('/(root)/(tabs)/home');
     }
-  }, [isAuthLoaded, isSignedIn]);
+  }, [isLoaded, isSignedIn]);
 
-  // While Clerk is checking session or signIn is not loaded, show nothing or a small loader
-  if (!isAuthLoaded || !isSignInLoaded) {
-    // Could return <ActivityIndicator/> or null
+  if (!isLoaded) {
     return null;
   }
 
-  // If we have a valid session, also render nothing (useEffect will navigate away)
   if (isSignedIn) {
     return null;
   }
 
   const onSignInPress = async () => {
-    // --- Cancel any ongoing downloads before sign in ---
     if (isDownloading) {
       Object.keys(downloadProgress).forEach((modelName) => {
         if (downloadProgress[modelName] < 1) {
@@ -56,21 +53,19 @@ export default function SignIn() {
     }
 
     try {
-      const signInAttempt = await signIn.create({
-        identifier: form.email,
+      const { error } = await supabase.auth.signInWithPassword({
+        email: form.email,
         password: form.password,
       });
 
-      if (signInAttempt.status === 'complete') {
-        await setActive({ session: signInAttempt.createdSessionId });
-        router.replace('/(root)/(tabs)/home');
-      } else {
-        // Optional: handle incomplete flow
-        Alert.alert('Error', 'Log in failed. Please try again.');
+      if (error) {
+        themedAlert('Error', error.message);
+        return;
       }
+
+      router.replace('/(root)/(tabs)/home');
     } catch (err: any) {
-      console.log(JSON.stringify(err, null, 2));
-      Alert.alert('Error', err.errors?.[0]?.longMessage || 'Sign-in failed');
+      themedAlert('Error', err.message || 'Sign-in failed');
     }
   };
 

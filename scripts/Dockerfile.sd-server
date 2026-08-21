@@ -1,0 +1,85 @@
+# Cross-compiles leejet/stable-diffusion.cpp's sd-server binary for
+# Android arm64-v8a, with the -Wl,-z,max-page-size=16384 linker flag
+# so the resulting ELF works on Android 15+ devices that use 16-KB
+# memory pages (https://developer.android.com/guide/practices/page-sizes).
+#
+# Reuses the previously-built `sd-opencl-builder:latest` base image —
+# saves ~20 min vs building from scratch (apt install + NDK r27c
+# download + OpenCL stub all stay cached in the parent image).
+#
+# If you don't have sd-opencl-builder locally:
+#   See scripts/Dockerfile.sd-server.full for the from-scratch build.
+#
+# Build:  docker build -f scripts/Dockerfile.sd-server -t microgpt-sd-server:latest .
+# Run:    docker create + docker cp (see scripts/build-sd-server.sh)
+
+FROM sd-opencl-builder:latest
+
+# Pin sd.cpp to a known-good master commit (April 29, 2026 — includes
+# VAE-tiling memory leak fix #1465 and dpm++2s_a fix #1435).
+ARG SD_CPP_COMMIT=3d6064b
+
+# Refresh OpenCL headers to OpenCL 3.0+ inside the NDK sysroot. The
+# cached sd-opencl-builder image was built with Apr 12 OpenCL-Headers
+# which predate `cl_mem_properties` and the Qualcomm CL_LARGE_BUFFER_QCOM
+# code path that newer ggml-opencl uses. Without this update, ninja
+# fails compiling ggml/src/ggml-opencl/ggml-opencl.cpp.
+RUN rm -rf /tmp/opencl-headers && \
+    git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers.git /tmp/opencl-headers && \
+    rm -rf $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/CL && \
+    mkdir -p $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/CL && \
+    cp -r /tmp/opencl-headers/CL/* \
+      $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/CL/ && \
+    rm -rf /tmp/opencl-headers
+
+# Bring the existing /src/sd.cpp clone up to the new commit. We skip
+# the `examples/server/frontend` submodule entirely — it's only the
+# server WebUI assets (we hit the HTTP API directly) AND its upstream
+# pinned commit periodically gets GC'd, breaking submodule fetch.
+# `ggml` is the only submodule that actually matters for the build.
+RUN cd /src/sd.cpp && \
+    git remote set-url origin https://github.com/leejet/stable-diffusion.cpp.git && \
+    git fetch --depth 200 origin && \
+    git checkout --force "$SD_CPP_COMMIT" && \
+    # Hard-skip the webui submodule: deinit, drop from .gitmodules,
+    # drop from the index. This must happen BEFORE `submodule update
+    # --recursive` because once recursive starts, it tries to fetch
+    # the pinned commit of every initialized submodule and fails on
+    # missing ones.
+    git submodule deinit -f examples/server/frontend 2>/dev/null || true && \
+    git config --file .gitmodules --remove-section submodule.examples/server/frontend 2>/dev/null || true && \
+    git rm --cached -f examples/server/frontend 2>/dev/null || true && \
+    rm -rf .git/modules/examples/server/frontend examples/server/frontend && \
+    git submodule update --init --recursive --force
+
+WORKDIR /src/sd.cpp
+
+# Re-configure with the original cmake flags (matches sd-opencl-builder
+# recipe) PLUS the 16-KB page alignment linker flags. NDK r27 only
+# applies 16-KB alignment to executables when asked explicitly; r28+
+# does it by default.
+RUN rm -rf build && mkdir build && cd build && \
+    cmake .. -G Ninja \
+      -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a \
+      -DANDROID_PLATFORM=android-30 \
+      -DGGML_OPENMP=OFF \
+      -DGGML_VULKAN=OFF \
+      -DGGML_OPENCL=ON \
+      -DGGML_OPENCL_TARGET_VERSION=300 \
+      -DGGML_BACKEND_DL=OFF \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DSD_BUILD_EXAMPLES=ON \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+
+RUN cd build && ninja -j$(nproc) sd-server
+
+# Strip and rename to lib*.so so Android's APK packager extracts it.
+RUN mkdir -p /work/output && \
+    $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
+      build/bin/sd-server -o /work/output/libsd-server.so && \
+    ls -la /work/output/libsd-server.so && \
+    echo "=== BUILD SUCCESS ==="
+
+CMD ["sh", "-c", "ls -la /work/output/"]

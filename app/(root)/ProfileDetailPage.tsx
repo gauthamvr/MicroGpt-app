@@ -8,19 +8,23 @@ import {
   useColorScheme,
   FlatList,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { BACKEND_URL } from '@/constants';
-import { useUser } from '@clerk/clerk-expo';
+import { themedAlert } from '@/components/ThemedAlert';
+import { useAuth } from '@/lib/supabase';
 import { useStore } from '@/store';
+import {
+  getProfileByUsername,
+  toggleUserLike,
+  toggleCharacterLike,
+  incrementDownload,
+} from '@/lib/supabase-api';
 
-// This type should match EXACTLY what your store expects for a "PublicCharacter."
 type StorePublicCharacter = {
   id: number;
-  clerk_id: string;
+  user_id: string;
   name: string;
   subtitle?: string;
   description: string;
@@ -32,42 +36,35 @@ type StorePublicCharacter = {
   updated_at: string;
 };
 
-// Extend your ProfileData type to include "liked_by_current_user"
 type ProfileData = {
   user_id: number;
-  clerk_id: string;
   username: string;
   display_name: string;
   bio: string;
   user_likes_count: number;
   is_pro: boolean;
   characters: StorePublicCharacter[];
-  liked_by_current_user?: boolean; // <--- new
+  liked_by_current_user?: boolean;
 };
 
 export default function ProfileDetailPage() {
   const { username } = useLocalSearchParams<{ username?: string }>();
   const router = useRouter();
   const colorScheme = useColorScheme();
-  const { user } = useUser();
+  const { user } = useAuth();
 
-  // Store references (same as in chat.tsx)
-  const {
-    likedPublicCharacters,
-    addOrUpdatePublicCharacterAsLocal,
-    removeLocalPublicCharacter,
-    removeLikedCharacter,
-    setEphemeralPublicCharacter,
-    setActiveFromEphemeralPublicChar,
-  } = useStore();
+  const likedPublicCharacters = useStore((s) => s.likedPublicCharacters);
+  const addOrUpdatePublicCharacterAsLocal = useStore((s) => s.addOrUpdatePublicCharacterAsLocal);
+  const removeLocalPublicCharacter = useStore((s) => s.removeLocalPublicCharacter);
+  const removeLikedCharacter = useStore((s) => s.removeLikedCharacter);
+  const setEphemeralPublicCharacter = useStore((s) => s.setEphemeralPublicCharacter);
+  const setActiveFromEphemeralPublicChar = useStore((s) => s.setActiveFromEphemeralPublicChar);
 
   const headingColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const cardBgColor = colorScheme === 'dark' ? '#242424' : '#f5f5f5';
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(false);
-
-  // Keep track of whether the current user has liked THIS user
   const [hasLiked, setHasLiked] = useState(false);
 
   // 1) Fetch the user data by username
@@ -75,19 +72,13 @@ export default function ProfileDetailPage() {
     if (!username) return;
     setLoading(true);
     try {
-      // Pass viewerClerkId in the query string if the user is logged in
-      const viewerId = user?.id ?? '';
-      const res = await fetch(
-        `${BACKEND_URL}/users/username/${username}?viewerClerkId=${viewerId}`
-      );
-      const data = await res.json();
-      if (res.ok && data.data) {
-        // data.data has your user info + liked_by_current_user
-        setProfile(data.data);
-        setHasLiked(!!data.data.liked_by_current_user);
+      const data = await getProfileByUsername(username);
+      if (data) {
+        setProfile(data);
+        setHasLiked(!!data.liked_by_current_user);
       }
     } catch (err) {
-      console.error('Error fetching user by username:', err);
+      if (__DEV__) console.error('Error fetching user by username:', err);
     } finally {
       setLoading(false);
     }
@@ -101,27 +92,18 @@ export default function ProfileDetailPage() {
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/users/${username}/toggle-like`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userClerkId: user.id }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        // data.data => the updated user row
-        setProfile((prev) =>
-          prev
-            ? {
-                ...prev,
-                user_likes_count: data.data.user_likes_count,
-              }
-            : null
-        );
-        // data.liked => whether we just liked or unliked
-        setHasLiked(data.liked);
-      }
+      const result = await toggleUserLike(username);
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              user_likes_count: result.data.user_likes_count,
+            }
+          : null
+      );
+      setHasLiked(result.liked);
     } catch (err) {
-      console.error('Error toggling user like:', err);
+      if (__DEV__) console.error('Error toggling user like:', err);
     }
   };
 
@@ -132,65 +114,48 @@ export default function ProfileDetailPage() {
 
   const handleToggleLikeCharacter = async (char: StorePublicCharacter) => {
     if (!user?.id) {
-      Alert.alert('Not logged in', 'You must be logged in to like characters.');
+      themedAlert('Not logged in', 'You must be logged in to like characters.');
       return;
     }
     try {
-      const res = await fetch(
-        `${BACKEND_URL}/publicCharacters/${char.id}/toggle-like`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userClerkId: user.id }),
-        }
-      );
-      const data = await res.json();
-      if (res.ok) {
-        // Refresh the profile so the updated likes_count shows
-        fetchUserProfile();
+      const result = await toggleCharacterLike(char.id);
+      // Refresh the profile so the updated likes_count shows
+      fetchUserProfile();
 
-        // If just liked => add to local store
-        if (data.liked === true && data.data) {
-          const updatedChar = data.data; // backend returns the updated row
-          addOrUpdatePublicCharacterAsLocal({
-            id: updatedChar.id,
-            clerk_id: updatedChar.clerk_id,
-            name: updatedChar.name,
-            subtitle: updatedChar.subtitle,
-            description: updatedChar.description,
-            conversation_style: updatedChar.conversation_style,
-            model_name: updatedChar.model_name,
-            likes_count: updatedChar.likes_count,
-            downloads_count: updatedChar.downloads_count,
-            created_at: updatedChar.created_at,
-            updated_at: updatedChar.updated_at,
-          });
-        }
+      // If just liked => add to local store
+      if (result.liked === true && result.data) {
+        const updatedChar = result.data;
+        addOrUpdatePublicCharacterAsLocal({
+          id: updatedChar.id,
+          user_id: updatedChar.user_id,
+          name: updatedChar.name,
+          subtitle: updatedChar.subtitle,
+          description: updatedChar.description,
+          conversation_style: updatedChar.conversation_style,
+          model_name: updatedChar.model_name,
+          likes_count: updatedChar.likes_count,
+          downloads_count: updatedChar.downloads_count,
+          created_at: updatedChar.created_at,
+          updated_at: updatedChar.updated_at,
+        });
+      }
 
-        // If unliked => remove from store
-        if (data.liked === false && data.data) {
-          removeLikedCharacter(char.id);
-          removeLocalPublicCharacter(char.id);
-        }
-      } else {
-        console.error('Error toggling like:', data.error);
+      // If unliked => remove from store
+      if (result.liked === false && result.data) {
+        removeLikedCharacter(char.id);
+        removeLocalPublicCharacter(char.id);
       }
     } catch (err) {
-      console.error('Error toggling like character:', err);
+      if (__DEV__) console.error('Error toggling like character:', err);
     }
   };
 
   // CHARACTER: load ephemeral
   const handlePressCharacter = async (char: StorePublicCharacter) => {
     try {
-      await fetch(
-        `${BACKEND_URL}/publicCharacters/${char.id}/increment-download`,
-        {
-          method: 'POST',
-        }
-      );
+      await incrementDownload(char.id);
     } catch (error) {
-      console.error('Error incrementing download:', error);
+      if (__DEV__) console.error('Error incrementing download:', error);
     }
 
     setEphemeralPublicCharacter({ ...char });
@@ -207,7 +172,6 @@ export default function ProfileDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username]);
 
-  // If there's no username param, show a fallback
   if (!username) {
     return (
       <SafeAreaView
@@ -223,7 +187,6 @@ export default function ProfileDetailPage() {
     );
   }
 
-  // If loading, show a spinner
   if (loading) {
     return (
       <SafeAreaView
@@ -239,7 +202,6 @@ export default function ProfileDetailPage() {
     );
   }
 
-  // If fetched but no profile found, show error
   if (!profile) {
     return (
       <SafeAreaView
@@ -257,7 +219,6 @@ export default function ProfileDetailPage() {
     );
   }
 
-  // Render each public character
   const renderCharItem = ({ item }: { item: StorePublicCharacter }) => {
     const liked = isCharLiked(item.id);
     return (
@@ -269,7 +230,6 @@ export default function ProfileDetailPage() {
           borderRadius: 8,
         }}
       >
-        {/* Top row: name + heart icon */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
           <Text
             style={{
@@ -296,14 +256,12 @@ export default function ProfileDetailPage() {
           </TouchableOpacity>
         </View>
 
-        {/* Optional subtitle */}
         {item.subtitle ? (
           <Text style={{ color: '#777', marginBottom: 4 }}>
             {item.subtitle}
           </Text>
         ) : null}
 
-        {/* likes / downloads row + arrow to load */}
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Ionicons
             name="heart"
@@ -325,7 +283,6 @@ export default function ProfileDetailPage() {
             {item.downloads_count}
           </Text>
 
-          {/* Load ephemeral */}
           <TouchableOpacity
             onPress={() => handlePressCharacter(item)}
             style={{
@@ -354,7 +311,6 @@ export default function ProfileDetailPage() {
         paddingTop: 8,
       }}
     >
-      {/* Centered user info */}
       <View style={{ alignItems: 'center', marginTop: 20 }}>
         <Text
           style={{
@@ -376,7 +332,6 @@ export default function ProfileDetailPage() {
           @{profile.username}
         </Text>
 
-        {/* Likes count + "like user" heart */}
         <View
           style={{
             flexDirection: 'row',
@@ -404,7 +359,6 @@ export default function ProfileDetailPage() {
         </View>
       </View>
 
-      {/* Bio (if any) */}
       {profile.bio ? (
         <Text
           style={{
@@ -418,7 +372,6 @@ export default function ProfileDetailPage() {
         </Text>
       ) : null}
 
-      {/* List of public characters */}
       <Text
         style={{
           marginTop: 10,

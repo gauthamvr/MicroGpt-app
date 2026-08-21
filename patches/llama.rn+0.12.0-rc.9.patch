@@ -1,0 +1,21 @@
+diff --git a/node_modules/llama.rn/install/download-native-artifacts.js b/node_modules/llama.rn/install/download-native-artifacts.js
+index 0000000..0000000 100644
+--- a/node_modules/llama.rn/install/download-native-artifacts.js
++++ b/node_modules/llama.rn/install/download-native-artifacts.js
+@@ -165,7 +165,15 @@ async function downloadAndVerify(url, archivePath, expectedSha256) {
+ }
+
+ function extractArchive(archivePath) {
+-  const result = spawnSync('tar', ['-xzf', archivePath, '-C', packageRoot], {
++  // On Windows, prefer the system bsdtar (C:\Windows\System32\tar.exe) over
++  // any MSYS/Git Bash GNU tar on PATH — GNU tar misinterprets `C:\...` as
++  // `host:path` and either tries to connect remotely or mangles the path.
++  // bsdtar handles Windows paths natively.
++  const tarBin =
++    process.platform === 'win32' && process.env.SystemRoot
++      ? `${process.env.SystemRoot}\\System32\\tar.exe`
++      : 'tar'
++  const result = spawnSync(tarBin, ['-xzf', archivePath, '-C', packageRoot], {
+     stdio: 'inherit',
+   })
+

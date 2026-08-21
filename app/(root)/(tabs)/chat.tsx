@@ -6,23 +6,26 @@ import {
   View,
   TouchableOpacity,
   FlatList,
-  Alert,
   useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { themedAlert } from '@/components/ThemedAlert';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { useUser } from '@clerk/clerk-expo';
+import { useAuth } from '@/lib/supabase';
 import { useRouter } from 'expo-router';
 import { useStore } from '@/store';
-import { BACKEND_URL } from '@/constants';
 import { useFocusEffect } from '@react-navigation/native';
-
-const BASE_URL = BACKEND_URL;
+import {
+  getPublicAndLiked,
+  toggleCharacterLike,
+  incrementDownload,
+} from '@/lib/supabase-api';
+import ChubBrowserModal from '@/components/ChubBrowserModal';
 
 const Characters = () => {
   const colorScheme = useColorScheme();
   const router = useRouter();
-  const { user } = useUser();
+  const { user } = useAuth();
 
   const headingColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const cardBgColor = colorScheme === 'dark' ? '#242424' : '#f5f5f5';
@@ -33,41 +36,34 @@ const Characters = () => {
   const inactiveBg = colorScheme === 'dark' ? '#666666' : '#CCCCCC';
   const inactiveText = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
 
-  const {
-    likedPublicCharacters,
-    setLikedCharacters,
-    ephemeralPublicCharacter,
-    setEphemeralPublicCharacter,
-    setActiveFromEphemeralPublicChar,
-    addOrUpdatePublicCharacterAsLocal,
-    removeLocalPublicCharacter,
-    removeLikedCharacter,
-  } = useStore();
+  // Per-field selectors so this tab doesn't re-render on every
+  // chatHistory update while the user is streaming on Home. Bottom-tab
+  // screens stay mounted after first visit, so a bare useStore() here
+  // was re-rendering this screen ~20×/sec during long generations.
+  const likedPublicCharacters = useStore((s) => s.likedPublicCharacters);
+  const setLikedCharacters = useStore((s) => s.setLikedCharacters);
+  const ephemeralPublicCharacter = useStore((s) => s.ephemeralPublicCharacter);
+  const setEphemeralPublicCharacter = useStore((s) => s.setEphemeralPublicCharacter);
+  const setActiveFromEphemeralPublicChar = useStore((s) => s.setActiveFromEphemeralPublicChar);
+  const addOrUpdatePublicCharacterAsLocal = useStore((s) => s.addOrUpdatePublicCharacterAsLocal);
+  const removeLocalPublicCharacter = useStore((s) => s.removeLocalPublicCharacter);
+  const removeLikedCharacter = useStore((s) => s.removeLikedCharacter);
 
   const [sortBy, setSortBy] = useState<'likes' | 'downloads'>('likes');
   const [publicChars, setPublicChars] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [showChubBrowser, setShowChubBrowser] = useState(false);
 
   // -------------------------
   // Single fetch to get public + liked
   // -------------------------
   const fetchPublicAndLiked = async () => {
     try {
-      const userClerkId = user?.id || '';
-      const queryParams = `?sortBy=${sortBy}${
-        userClerkId ? `&userClerkId=${userClerkId}` : ''
-      }`;
-      const response = await fetch(`${BASE_URL}/publicAndLiked${queryParams}`);
-      const data = await response.json();
-      if (response.ok) {
-        // data = { publicChars, likedChars }
-        setPublicChars(data.publicChars);
-        setLikedCharacters(data.likedChars || []);
-      } else {
-        console.error('Failed fetching /publicAndLiked:', data.error);
-      }
+      const data = await getPublicAndLiked(sortBy);
+      setPublicChars(data.publicChars || []);
+      setLikedCharacters(data.likedChars || []);
     } catch (error) {
-      console.error('fetchPublicAndLiked error:', error);
+      if (__DEV__) console.error('fetchPublicAndLiked error:', error);
     }
   };
 
@@ -94,100 +90,72 @@ const Characters = () => {
   // Toggle "like" with an optimistic update
   const handleToggleLike = async (charId: number) => {
     if (!user?.id) {
-      Alert.alert('Not logged in', 'You must be logged in to like characters.');
+      themedAlert('Not logged in', 'You must be logged in to like characters.');
       return;
     }
     try {
-      // Call toggle endpoint
-      const res = await fetch(
-        `${BASE_URL}/publicCharacters/${charId}/toggle-like`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userClerkId: user.id }),
-        }
-      );
-      const data = await res.json();
-      if (res.ok) {
-        // data = { data: updatedChar, liked: boolean }
-        const updatedChar = data.data;
-        const justLiked = data.liked === true;
+      const result = await toggleCharacterLike(charId);
+      const updatedChar = result.data;
+      const justLiked = result.liked === true;
 
-        // 1) Update local "likedPublicCharacters" list
-        if (justLiked) {
-          // Add to local liked
-          const oldLiked = useStore.getState().likedPublicCharacters;
-          setLikedCharacters([...oldLiked, updatedChar]);
-        } else {
-          // Remove from local liked
-          removeLikedCharacter(charId);
-        }
-
-        // 2) Update local "publicChars" array for the updated character
-        setPublicChars((prev) =>
-          prev.map((pc) => {
-            if (pc.id === charId) {
-              return {
-                ...pc,
-                likes_count: updatedChar.likes_count,
-              };
-            }
-            return pc;
-          })
-        );
-
-        // 3) If newly liked, add to local store
-        if (justLiked) {
-          addOrUpdatePublicCharacterAsLocal({
-            id: updatedChar.id,
-            clerk_id: updatedChar.clerk_id,
-            name: updatedChar.name,
-            subtitle: updatedChar.subtitle,
-            description: updatedChar.description,
-            conversation_style: updatedChar.conversation_style,
-            model_name: updatedChar.model_name,
-            likes_count: updatedChar.likes_count,
-            downloads_count: updatedChar.downloads_count,
-            created_at: updatedChar.created_at,
-            updated_at: updatedChar.updated_at,
-          });
-        } else {
-          // If just unliked, remove from store
-          removeLocalPublicCharacter(charId);
-        }
+      // 1) Update local "likedPublicCharacters" list
+      if (justLiked) {
+        const oldLiked = useStore.getState().likedPublicCharacters;
+        setLikedCharacters([...oldLiked, updatedChar]);
       } else {
-        console.error('Error toggling like:', data.error);
+        removeLikedCharacter(charId);
+      }
+
+      // 2) Update local "publicChars" array for the updated character
+      setPublicChars((prev) =>
+        prev.map((pc) => {
+          if (pc.id === charId) {
+            return {
+              ...pc,
+              likes_count: updatedChar.likes_count,
+            };
+          }
+          return pc;
+        })
+      );
+
+      // 3) If newly liked, add to local store
+      if (justLiked) {
+        addOrUpdatePublicCharacterAsLocal({
+          id: updatedChar.id,
+          user_id: updatedChar.user_id,
+          name: updatedChar.name,
+          subtitle: updatedChar.subtitle,
+          description: updatedChar.description,
+          conversation_style: updatedChar.conversation_style,
+          model_name: updatedChar.model_name,
+          likes_count: updatedChar.likes_count,
+          downloads_count: updatedChar.downloads_count,
+          created_at: updatedChar.created_at,
+          updated_at: updatedChar.updated_at,
+        });
+      } else {
+        removeLocalPublicCharacter(charId);
       }
     } catch (error) {
-      console.error('handleToggleLike error:', error);
+      if (__DEV__) console.error('handleToggleLike error:', error);
     }
   };
 
-  // Increment "download" count on server
+  // Increment "download" count
   const handleIncrementDownload = async (charId: number) => {
     try {
-      const res = await fetch(
-        `${BASE_URL}/publicCharacters/${charId}/increment-download`,
-        {
-          method: 'POST',
-        }
+      const result = await incrementDownload(charId);
+      const updatedChar = result.data;
+      setPublicChars((prev) =>
+        prev.map((pc) =>
+          pc.id === charId
+            ? { ...pc, downloads_count: updatedChar.downloads_count }
+            : pc
+        )
       );
-      const data = await res.json();
-      if (!res.ok) {
-        console.error('Error incrementing download:', data.error);
-      } else {
-        // optional: update local publicChars
-        const updatedChar = data.data;
-        setPublicChars((prev) =>
-          prev.map((pc) =>
-            pc.id === charId
-              ? { ...pc, downloads_count: updatedChar.downloads_count }
-              : pc
-          )
-        );
-      }
     } catch (error) {
-      console.error('handleIncrementDownload error:', error);
+      if (__DEV__) console.error('handleIncrementDownload error:', error);
     }
   };
 
@@ -348,7 +316,7 @@ const Characters = () => {
       }`}
     >
       {/* Header */}
-      <View className="px-4 pt-3">
+      <View className="px-4 pt-3" style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <Text
           style={{
             fontSize: 18,
@@ -358,6 +326,22 @@ const Characters = () => {
         >
           Public Characters
         </Text>
+        <TouchableOpacity
+          onPress={() => setShowChubBrowser(true)}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: colorScheme === 'dark' ? '#242424' : '#f5f5f5',
+            borderRadius: 8,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+          }}
+        >
+          <Ionicons name="compass-outline" size={16} color={headingColor} style={{ marginRight: 4 }} />
+          <Text style={{ color: headingColor, fontSize: 13, fontWeight: '600' }}>
+            Discover More
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Sort By Buttons */}
@@ -410,6 +394,12 @@ const Characters = () => {
         // Pull-to-refresh
         onRefresh={handleRefresh}
         refreshing={refreshing}
+      />
+
+      {/* Chub.ai Character Browser */}
+      <ChubBrowserModal
+        visible={showChubBrowser}
+        onClose={() => setShowChubBrowser(false)}
       />
     </SafeAreaView>
   );

@@ -1,8 +1,8 @@
-//app/(root)/(tabs)/layout.tsx
+// //app/(root)/(tabs)/layout.tsx
 
 import { Tabs, useRouter } from 'expo-router';
 import { Image, ImageSourcePropType, View } from 'react-native';
-import { useUser } from '@clerk/clerk-expo';
+import { useAuth } from '@/lib/supabase';
 import { icons } from '@/constants';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
@@ -38,14 +38,13 @@ const TabIcon = ({
 };
 
 export default function Layout() {
-  const { user, isLoaded } = useUser();
+  const { isSignedIn, isLoaded } = useAuth();
   const router = useRouter();
-  const isSignedIn = isLoaded && user != null;
   const colorScheme = useColorScheme() || 'light';
 
   useEffect(() => {
-    // Additional side effects if needed
-  }, [isSignedIn]);
+    /* extra side-effects can go here if needed */
+  }, [isSignedIn, isLoaded]);
 
   return (
     <View
@@ -62,7 +61,7 @@ export default function Layout() {
             backgroundColor: colorScheme === 'dark' ? '#0D0D0D' : '#FCFCFC',
             borderTopWidth: 0,
             elevation: 0,
-            height: 60, // Tab bar height
+            height: 60,
           },
         }}
       >

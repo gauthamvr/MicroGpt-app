@@ -9,16 +9,19 @@ import {
   TextInput,
   ScrollView,
   useColorScheme,
-  Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import { themedAlert } from '@/components/ThemedAlert';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useStore, Character } from '@/store';
-import DownloadModel from './DownloadModel';
-import { useUser } from '@clerk/clerk-expo';
-import { BACKEND_URL } from '@/constants';
-
-const BASE_URL = BACKEND_URL;
+import { useAuth } from '@/lib/supabase';
+import {
+  createPublicCharacter,
+  updatePublicCharacter,
+  deletePublicCharacter,
+} from '@/lib/supabase-api';
 
 type Props = {
   visible: boolean;
@@ -32,22 +35,16 @@ const CreateOrEditCharacterModal: React.FC<Props> = ({
   characterToEdit,
 }) => {
   const colorScheme = useColorScheme();
-  const {
-    downloadedModels,
-    addCharacter,
-    updateCharacter,
-    setDidUserCloseDownloadModal,
-  } = useStore();
-  const { user } = useUser();
+  const isDark = colorScheme === 'dark';
+  const downloadedModels = useStore((s) => s.downloadedModels);
+  const addCharacter = useStore((s) => s.addCharacter);
+  const updateCharacter = useStore((s) => s.updateCharacter);
+  const { user } = useAuth();
 
-  // New subtitle state
   const [subtitle, setSubtitle] = useState('');
-
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [conversationStyle, setConversationStyle] = useState('');
-  const [modelName, setModelName] = useState('');
-  const [showDownloadModel, setShowDownloadModel] = useState(false);
 
   // Private/Public toggle
   const [isPublic, setIsPublic] = useState(true);
@@ -58,46 +55,46 @@ const CreateOrEditCharacterModal: React.FC<Props> = ({
   const isEditMode = !!characterToEdit;
   const isReadOnly = !!characterToEdit?.isReadOnly;
 
+  // Theme colors
+  const bgColor = isDark ? '#1C1C1E' : '#FFFFFF';
+  const cardBg = isDark ? '#2C2C2E' : '#F5F5F5';
+  const textColor = isDark ? '#FFFFFF' : '#000000';
+  const subTextColor = isDark ? '#9BA1A6' : '#6B7280';
+  const inputBg = isDark ? '#2C2C2E' : '#F7F7F8';
+  const inputBorder = isDark ? '#3A3A3C' : '#E5E5EA';
+  const accentColor = isDark ? '#FFFFFF' : '#000000';
+  const accentTextColor = isDark ? '#000000' : '#FFFFFF';
+  const disabledBg = isDark ? '#3A3A3C' : '#D1D1D6';
+  const disabledText = isDark ? '#636366' : '#AEAEB2';
+
   useEffect(() => {
     if (visible) {
       setName(characterToEdit?.name ?? '');
       setSubtitle(characterToEdit?.subtitle ?? '');
       setDescription(characterToEdit?.description ?? '');
       setConversationStyle(characterToEdit?.conversationStyle ?? '');
-      setModelName(characterToEdit?.modelName ?? '');
       setPublicCharacterId(characterToEdit?.publicId ?? null);
       setIsPublic(!!characterToEdit?.publicId);
-
-      setShowDownloadModel(false);
-      setDidUserCloseDownloadModal(false);
     }
-  }, [visible, characterToEdit, setDidUserCloseDownloadModal]);
-
-  const handleUseModel = (chosenModelName: string) => {
-    setModelName(chosenModelName);
-    setShowDownloadModel(false);
-  };
+  }, [visible, characterToEdit]);
 
   const handleClose = () => {
-    setDidUserCloseDownloadModal(true);
     onClose();
   };
 
-  const isModelDownloaded = downloadedModels.includes(`${modelName}.gguf`);
-
-  // Ensure form is valid
+  // Validation: name required (3+ chars), at least one of description or conversationStyle
   const isFormValid = () => {
-    // Must have at least one downloaded model
-    if (downloadedModels.length === 0) return false;
-    // Model must be chosen and downloaded
-    if (!modelName || !isModelDownloaded) return false;
-    // Basic text checks
     if (name.trim().length < 3) return false;
-    if (description.trim().length < 21) return false;
-    // Must have at least 3 <User>: examples
-    const userMatches = conversationStyle.match(/<User>:/g);
-    if (!userMatches || userMatches.length < 3) return false;
+    if (description.trim().length === 0 && conversationStyle.trim().length === 0)
+      return false;
     return true;
+  };
+
+  // Resolve the model name: keep existing, or fall back to first downloaded
+  const resolveModelName = (): string => {
+    if (characterToEdit?.modelName) return characterToEdit.modelName;
+    if (downloadedModels.length > 0) return downloadedModels[0].replace('.gguf', '');
+    return '';
   };
 
   // Sync with server DB
@@ -105,39 +102,29 @@ const CreateOrEditCharacterModal: React.FC<Props> = ({
     try {
       if (!user?.id) return;
       if (isPublic) {
-        // create or update
-        const bodyData = {
-          id: publicCharacterId,
-          clerkId: user.id,
+        const charData = {
           name: name.trim(),
           subtitle: subtitle.trim(),
           description: description.trim(),
           conversationStyle: conversationStyle.trim(),
-          modelName: modelName.trim(),
+          modelName: resolveModelName(),
         };
-        const res = await fetch(`${BASE_URL}/publicCharacters`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bodyData),
-        });
-        const data = await res.json();
-        if (res.ok && data.data?.length > 0) {
-          const dbRec = data.data[0];
+
+        if (publicCharacterId) {
+          const dbRec = await updatePublicCharacter(publicCharacterId, charData);
+          if (localId) {
+            updateCharacter(localId, { publicId: dbRec.id });
+          }
+        } else {
+          const dbRec = await createPublicCharacter(charData);
           setPublicCharacterId(dbRec.id);
           if (localId) {
             updateCharacter(localId, { publicId: dbRec.id });
           }
         }
       } else {
-        // If switching from public => private, remove from DB
         if (publicCharacterId) {
-          const res = await fetch(
-            `${BASE_URL}/publicCharacters/${publicCharacterId}`,
-            {
-              method: 'DELETE',
-            }
-          );
-          await res.json();
+          await deletePublicCharacter(publicCharacterId);
           if (localId) {
             updateCharacter(localId, { publicId: null });
           }
@@ -149,7 +136,6 @@ const CreateOrEditCharacterModal: React.FC<Props> = ({
     }
   };
 
-  // Helper: add a sample conversation snippet
   const handleAddExample = () => {
     if (name.trim().length < 3) return;
     const template = `<User>: Hello, how are you?\n<${name.trim()}>: I am good, what about you?\n\n`;
@@ -159,76 +145,41 @@ const CreateOrEditCharacterModal: React.FC<Props> = ({
   const handleCreateOrUpdate = async () => {
     if (!isFormValid()) return;
     if (!user?.id) {
-      Alert.alert(
+      themedAlert(
         'Not logged in',
         'You must be logged in to create a character.'
       );
       return;
     }
 
+    const modelName = resolveModelName();
+
     if (!isEditMode) {
-      // Create locally
       const newId = Date.now().toString();
       addCharacter({
         name: name.trim(),
         subtitle: subtitle.trim(),
         description: description.trim(),
         conversationStyle: conversationStyle.trim(),
-        modelName: modelName.trim(),
+        modelName,
         publicId: null,
       });
-      Alert.alert('Success', 'Character created!');
-      // Sync with server
+      themedAlert('Success', 'Character created!');
       await syncWithBackend(newId);
     } else {
-      // Update local
       updateCharacter(characterToEdit!.id, {
         name: name.trim(),
         subtitle: subtitle.trim(),
         description: description.trim(),
         conversationStyle: conversationStyle.trim(),
-        modelName: modelName.trim(),
+        modelName,
       });
-      Alert.alert('Success', 'Character updated!');
+      themedAlert('Success', 'Character updated!');
       await syncWithBackend(characterToEdit!.id);
     }
     onClose();
   };
 
-  // Tailwind classes for the new public/private toggle styles
-  const publicButtonContainerClass = `flex-1 p-3 rounded mr-2 ${
-    isPublic
-      ? 'bg-[#0D0D0D] dark:bg-[#FCFCFC]'
-      : 'bg-[#0D0D0D]/50 dark:bg-[#FCFCFC]/50'
-  }`;
-  const publicButtonTextClass = `text-center font-bold ${
-    isPublic ? 'text-white dark:text-black' : 'text-white dark:text-black'
-  }`;
-
-  const privateButtonContainerClass = `flex-1 p-3 rounded ${
-    !isPublic
-      ? 'bg-[#0D0D0D] dark:bg-[#FCFCFC]'
-      : 'bg-[#0D0D0D]/50 dark:bg-[#FCFCFC]/50'
-  }`;
-  const privateButtonTextClass = `text-center font-bold ${
-    !isPublic ? 'text-white dark:text-black' : 'text-white dark:text-black'
-  }`;
-
-  // If readOnly => show fewer fields
-  const showFullFields = !isReadOnly;
-
-  // Display for model
-  const noDownloadedModels = downloadedModels.length === 0;
-  let modelDisplayText = 'Select a Model';
-  if (noDownloadedModels) {
-    modelDisplayText = 'No model available. Tap to download.';
-  } else if (modelName && !isModelDownloaded) {
-    modelDisplayText = `Model missing: ${modelName}`;
-  } else if (modelName && isModelDownloaded) {
-    modelDisplayText = `Selected: ${modelName}`;
-  }
-
-  // For controlling max 200 words in subtitle
   const handleSubtitleChange = (text: string) => {
     const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
     if (wordCount <= 200) {
@@ -236,219 +187,284 @@ const CreateOrEditCharacterModal: React.FC<Props> = ({
     }
   };
 
+  const showFullFields = !isReadOnly;
+
+  const renderInput = (
+    value: string,
+    onChangeText: (t: string) => void,
+    placeholder: string,
+    options?: {
+      multiline?: boolean;
+      minHeight?: number;
+      maxLength?: number;
+      editable?: boolean;
+      mono?: boolean;
+    }
+  ) => (
+    <TextInput
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor={isDark ? '#636366' : '#AEAEB2'}
+      maxLength={options?.maxLength}
+      multiline={options?.multiline}
+      editable={options?.editable !== false}
+      style={{
+        backgroundColor: inputBg,
+        borderWidth: 1,
+        borderColor: inputBorder,
+        borderRadius: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        color: textColor,
+        fontSize: 15,
+        lineHeight: 20,
+        marginBottom: 16,
+        ...(options?.minHeight ? { minHeight: options.minHeight, textAlignVertical: 'top' as const } : {}),
+        ...(options?.mono ? { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 } : {}),
+      }}
+    />
+  );
+
+  const renderLabel = (label: string, hint?: string) => (
+    <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: 6 }}>
+      <Text style={{ color: textColor, fontSize: 14, fontWeight: '600' }}>
+        {label}
+      </Text>
+      {hint ? (
+        <Text style={{ color: subTextColor, fontSize: 12, marginLeft: 6 }}>
+          {hint}
+        </Text>
+      ) : null}
+    </View>
+  );
+
   return (
     <Modal visible={visible} transparent animationType="slide">
-      <View className="flex-1 bg-theme-light-background dark:bg-theme-dark-background bg-opacity-50 justify-center items-center p-4">
-        {/* Increased modal width to w-[95%] */}
-        <View className="w-[100%] max-h-[90%] rounded-lg p-4 bg-theme-light-input-background dark:bg-theme-dark-input-background">
-          {/* Title */}
-          <Text
-            className="text-lg font-bold"
-            style={{ color: colorScheme === 'dark' ? '#FFFFFF' : '#000000' }}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: bgColor,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              maxHeight: '92%',
+              paddingTop: 12,
+            }}
           >
-            {isReadOnly
-              ? 'View Character'
-              : isEditMode
-                ? 'Edit Character'
-                : 'Create Character'}
-          </Text>
+            {/* Drag handle */}
+            <View
+              style={{
+                width: 36,
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: isDark ? '#636366' : '#D1D1D6',
+                alignSelf: 'center',
+                marginBottom: 12,
+              }}
+            />
 
-          {/* Removed the progress bar block here */}
-
-          <ScrollView className="mt-3">
-            {/* Model selection */}
-            <Text
-              className="mb-1"
-              style={{ color: colorScheme === 'dark' ? '#FFFFFF' : '#000000' }}
-            >
-              Model{isReadOnly ? '' : ' (must be downloaded)'}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowDownloadModel(true)}
-              className="border border-gray-600 rounded p-3 mb-3"
+            {/* Header */}
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                paddingHorizontal: 20,
+                marginBottom: 16,
+              }}
             >
               <Text
                 style={{
-                  color: colorScheme === 'dark' ? '#999999' : '#666666',
+                  fontSize: 20,
+                  fontWeight: 'bold',
+                  color: textColor,
                 }}
               >
-                {modelDisplayText}
+                {isReadOnly
+                  ? 'View Character'
+                  : isEditMode
+                    ? 'Edit Character'
+                    : 'Create Character'}
               </Text>
-            </TouchableOpacity>
-
-            {/* Name */}
-            <Text
-              className="mb-1"
-              style={{ color: colorScheme === 'dark' ? '#FFFFFF' : '#000000' }}
-            >
-              Name (max 100)
-            </Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              maxLength={100}
-              className="border border-gray-600 rounded p-3 mb-3"
-              style={{
-                color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
-              }}
-              placeholder="Character name"
-              placeholderTextColor="#888"
-              editable={!isReadOnly}
-            />
-
-            {showFullFields && (
-              <>
-                {/* Subtitle */}
-                <Text
-                  className="mb-1"
-                  style={{
-                    color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
-                  }}
-                >
-                  Subtitle (up to 200 words)
-                </Text>
-                <TextInput
-                  value={subtitle}
-                  onChangeText={handleSubtitleChange}
-                  className="border border-gray-600 rounded p-3 mb-3"
-                  style={{
-                    color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
-                    minHeight: 40,
-                    textAlignVertical: 'top',
-                  }}
-                  multiline
-                  placeholder="Short catchphrase or additional info"
-                  placeholderTextColor="#888"
-                />
-
-                {/* Description */}
-                <Text
-                  className="mb-1"
-                  style={{
-                    color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
-                  }}
-                >
-                  Description (max 500, min 21 chars)
-                </Text>
-                <TextInput
-                  value={description}
-                  onChangeText={setDescription}
-                  maxLength={500}
-                  className="border border-gray-600 rounded p-3 mb-3"
-                  style={{
-                    color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
-                    minHeight: 60,
-                    textAlignVertical: 'top',
-                  }}
-                  multiline
-                  placeholder="Describe your character here"
-                  placeholderTextColor="#888"
-                />
-
-                {/* Conversation Style */}
-                <Text
-                  className="mb-1"
-                  style={{
-                    color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
-                  }}
-                >
-                  Conversation Style (max 1000, ≥3 User examples)
-                </Text>
-                <TextInput
-                  value={conversationStyle}
-                  onChangeText={setConversationStyle}
-                  maxLength={1000}
-                  className="border border-gray-600 rounded p-3 mb-3"
-                  style={{
-                    color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
-                    minHeight: 100,
-                    textAlignVertical: 'top',
-                  }}
-                  multiline
-                  placeholder={`<User>: ...\n<${name || 'Character'}>: ...`}
-                  placeholderTextColor="#888"
-                />
-
-                <TouchableOpacity
-                  onPress={handleAddExample}
-                  disabled={name.trim().length < 3}
-                  className="mb-3"
-                  style={{ opacity: name.trim().length < 3 ? 0.5 : 1 }}
-                >
-                  <Text className="text-blue-500 font-bold">+ Add Example</Text>
-                </TouchableOpacity>
-
-                {/* Private / Public Toggler */}
-                <View className="flex-row mb-3">
-                  {/* Public Button */}
-                  <TouchableOpacity
-                    className={publicButtonContainerClass}
-                    onPress={() => setIsPublic(true)}
-                  >
-                    <Text className={publicButtonTextClass}>Public</Text>
-                  </TouchableOpacity>
-
-                  {/* Private Button */}
-                  <TouchableOpacity
-                    className={privateButtonContainerClass}
-                    onPress={() => setIsPublic(false)}
-                  >
-                    <Text className={privateButtonTextClass}>Private</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-
-            {/* If readOnly => no create/update button */}
-            {!isReadOnly && (
               <TouchableOpacity
-                onPress={handleCreateOrUpdate}
-                disabled={!isFormValid()}
-                className={`rounded p-3 ${
-                  isFormValid()
-                    ? colorScheme === 'dark'
-                      ? 'bg-white'
-                      : 'bg-black'
-                    : 'bg-gray-400'
-                }`}
+                onPress={handleClose}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: cardBg,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
               >
-                <Text
-                  className="text-center font-bold"
+                <Ionicons name="close" size={18} color={subTextColor} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              removeClippedSubviews
+            >
+              {/* Name */}
+              {renderLabel('Name', 'required')}
+              {renderInput(name, setName, 'Character name', {
+                maxLength: 100,
+                editable: !isReadOnly,
+              })}
+
+              {showFullFields && (
+                <>
+                  {/* Subtitle */}
+                  {renderLabel('Subtitle', 'optional, up to 200 words')}
+                  {renderInput(subtitle, handleSubtitleChange, 'Short tagline or catchphrase', {
+                    multiline: true,
+                    minHeight: 44,
+                  })}
+
+                  {/* Description */}
+                  {renderLabel('Description', 'fill this or conversation style')}
+                  {renderInput(description, setDescription, 'Describe your character — personality, background, traits...', {
+                    multiline: true,
+                    minHeight: 80,
+                    maxLength: 500,
+                  })}
+
+                  {/* Conversation Style */}
+                  {renderLabel('Conversation Style', 'fill this or description')}
+                  {renderInput(
+                    conversationStyle,
+                    setConversationStyle,
+                    `<User>: ...\n<${name || 'Character'}>: ...`,
+                    {
+                      multiline: true,
+                      minHeight: 100,
+                      maxLength: 1000,
+                      mono: true,
+                    }
+                  )}
+
+                  {/* Add Example button */}
+                  <TouchableOpacity
+                    onPress={handleAddExample}
+                    disabled={name.trim().length < 3}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      alignSelf: 'flex-start',
+                      marginTop: -8,
+                      marginBottom: 20,
+                      opacity: name.trim().length < 3 ? 0.4 : 1,
+                    }}
+                  >
+                    <Ionicons name="add-circle-outline" size={16} color="#3B82F6" />
+                    <Text
+                      style={{
+                        color: '#3B82F6',
+                        fontSize: 13,
+                        fontWeight: '600',
+                        marginLeft: 4,
+                      }}
+                    >
+                      Add Example
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Public / Private Toggle */}
+                  {renderLabel('Visibility')}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      backgroundColor: cardBg,
+                      borderRadius: 10,
+                      padding: 3,
+                      marginBottom: 24,
+                    }}
+                  >
+                    <TouchableOpacity
+                      onPress={() => setIsPublic(true)}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        alignItems: 'center',
+                        backgroundColor: isPublic ? accentColor : 'transparent',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontWeight: '600',
+                          fontSize: 14,
+                          color: isPublic ? accentTextColor : subTextColor,
+                        }}
+                      >
+                        Public
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setIsPublic(false)}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        alignItems: 'center',
+                        backgroundColor: !isPublic ? accentColor : 'transparent',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontWeight: '600',
+                          fontSize: 14,
+                          color: !isPublic ? accentTextColor : subTextColor,
+                        }}
+                      >
+                        Private
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {/* Create / Update Button */}
+              {!isReadOnly && (
+                <TouchableOpacity
+                  onPress={handleCreateOrUpdate}
+                  disabled={!isFormValid()}
                   style={{
-                    color: isFormValid()
-                      ? colorScheme === 'dark'
-                        ? '#000000'
-                        : '#FFFFFF'
-                      : '#666666',
+                    backgroundColor: isFormValid() ? accentColor : disabledBg,
+                    borderRadius: 12,
+                    paddingVertical: 14,
+                    alignItems: 'center',
+                    marginBottom: 8,
                   }}
                 >
-                  {isEditMode ? 'Update' : 'Create'}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-
-          {/* Close Icon */}
-          <TouchableOpacity
-            onPress={handleClose}
-            className="absolute top-3 right-3"
-          >
-            <Ionicons
-              name="close"
-              size={26}
-              color={colorScheme === 'dark' ? '#FFFFFF' : '#000000'}
-            />
-          </TouchableOpacity>
+                  <Text
+                    style={{
+                      color: isFormValid() ? accentTextColor : disabledText,
+                      fontWeight: 'bold',
+                      fontSize: 16,
+                    }}
+                  >
+                    {isEditMode ? 'Update Character' : 'Create Character'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
         </View>
-
-        {showDownloadModel && (
-          <DownloadModel
-            visible={showDownloadModel}
-            onClose={() => setShowDownloadModel(false)}
-            onUseModel={handleUseModel}
-          />
-        )}
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };

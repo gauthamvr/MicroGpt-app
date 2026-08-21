@@ -5,18 +5,16 @@ import {
   Modal,
   TouchableOpacity,
   TextInput,
-  Alert,
   useColorScheme,
 } from 'react-native';
+import { themedAlert } from '@/components/ThemedAlert';
 import { Ionicons } from '@expo/vector-icons';
-import { BACKEND_URL } from '@/constants';
-import { fetchAPI } from '@/lib/fetch';
+import { updateUserProfile } from '@/lib/supabase-api';
 
 type ProfileEditModalProps = {
   visible: boolean;
   onClose: () => void;
   initialUserData: {
-    clerk_id: string;
     username: string;
     display_name: string;
     bio: string;
@@ -48,20 +46,16 @@ export default function ProfileEditModal({
   const handleSave = async () => {
     setLoading(true);
     try {
-      await fetchAPI(`${BACKEND_URL}/users/${initialUserData.clerk_id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          display_name: displayName,
-          bio,
-        }),
+      await updateUserProfile({
+        username,
+        display_name: displayName,
+        bio,
       });
       onUpdated({ username, display_name: displayName, bio });
       onClose();
     } catch (err: any) {
       console.error('ProfileEditModal save error:', err);
-      Alert.alert('Error', err?.error || 'Failed to update profile');
+      themedAlert('Error', err?.message || 'Failed to update profile');
     } finally {
       setLoading(false);
     }
@@ -73,7 +67,7 @@ export default function ProfileEditModal({
       transparent
       animationType="slide"
       onRequestClose={onClose}
-      statusBarTranslucent={true} // covers status bar area on Android
+      statusBarTranslucent={true}
     >
       {/* Outer touchable => tapping here closes modal */}
       <TouchableOpacity
@@ -91,7 +85,7 @@ export default function ProfileEditModal({
           onPress={(e) => e.stopPropagation()}
           activeOpacity={1}
           style={{
-            backgroundColor: colorScheme === 'dark' ? '#333' : '#fff',
+            backgroundColor: colorScheme === 'dark' ? '#1C1C1E' : '#FFFFFF',
             borderRadius: 12,
             padding: 16,
           }}
@@ -108,7 +102,7 @@ export default function ProfileEditModal({
               style={{
                 fontSize: 18,
                 fontWeight: 'bold',
-                color: colorScheme === 'dark' ? '#fff' : '#000',
+                color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
               }}
             >
               Edit Profile
@@ -117,7 +111,7 @@ export default function ProfileEditModal({
               <Ionicons
                 name="close-circle-outline"
                 size={24}
-                color={colorScheme === 'dark' ? '#fff' : '#000'}
+                color={colorScheme === 'dark' ? '#FFFFFF' : '#000000'}
               />
             </TouchableOpacity>
           </View>
@@ -125,7 +119,7 @@ export default function ProfileEditModal({
           {/* Username input */}
           <Text
             style={{
-              color: colorScheme === 'dark' ? '#ccc' : '#555',
+              color: colorScheme === 'dark' ? '#CCCCCC' : '#333333',
               marginBottom: 4,
             }}
           >
@@ -136,18 +130,19 @@ export default function ProfileEditModal({
             onChangeText={setUsername}
             style={{
               borderWidth: 1,
-              borderColor: '#ccc',
+              borderColor: colorScheme === 'dark' ? '#444444' : '#CCCCCC',
               borderRadius: 6,
               padding: 8,
               marginBottom: 12,
-              color: colorScheme === 'dark' ? '#fff' : '#000',
+              backgroundColor: colorScheme === 'dark' ? '#2C2C2E' : '#F5F5F5',
+              color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
             }}
           />
 
           {/* Display Name input */}
           <Text
             style={{
-              color: colorScheme === 'dark' ? '#ccc' : '#555',
+              color: colorScheme === 'dark' ? '#CCCCCC' : '#333333',
               marginBottom: 4,
             }}
           >
@@ -158,18 +153,19 @@ export default function ProfileEditModal({
             onChangeText={setDisplayName}
             style={{
               borderWidth: 1,
-              borderColor: '#ccc',
+              borderColor: colorScheme === 'dark' ? '#444444' : '#CCCCCC',
               borderRadius: 6,
               padding: 8,
               marginBottom: 12,
-              color: colorScheme === 'dark' ? '#fff' : '#000',
+              backgroundColor: colorScheme === 'dark' ? '#2C2C2E' : '#F5F5F5',
+              color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
             }}
           />
 
           {/* Bio input */}
           <Text
             style={{
-              color: colorScheme === 'dark' ? '#ccc' : '#555',
+              color: colorScheme === 'dark' ? '#CCCCCC' : '#333333',
               marginBottom: 4,
             }}
           >
@@ -181,11 +177,12 @@ export default function ProfileEditModal({
             multiline
             style={{
               borderWidth: 1,
-              borderColor: '#ccc',
+              borderColor: colorScheme === 'dark' ? '#444444' : '#CCCCCC',
               borderRadius: 6,
               padding: 8,
               marginBottom: 12,
-              color: colorScheme === 'dark' ? '#fff' : '#000',
+              backgroundColor: colorScheme === 'dark' ? '#2C2C2E' : '#F5F5F5',
+              color: colorScheme === 'dark' ? '#FFFFFF' : '#000000',
             }}
           />
 
@@ -200,17 +197,17 @@ export default function ProfileEditModal({
                 paddingHorizontal: 12,
               }}
             >
-              <Text style={{ color: '#888' }}>Cancel</Text>
+              <Text style={{ color: colorScheme === 'dark' ? '#888888' : '#888888' }}>Cancel</Text>
             </TouchableOpacity>
 
-            {/* Save => pill-shaped. If loading, label is "Saving..." */}
+            {/* Save => pill-shaped */}
             <TouchableOpacity
               onPress={handleSave}
               disabled={loading}
               style={{
                 paddingVertical: 8,
                 paddingHorizontal: 16,
-                borderRadius: 999, // pill shape
+                borderRadius: 999,
                 backgroundColor: buttonBg,
                 justifyContent: 'center',
                 alignItems: 'center',

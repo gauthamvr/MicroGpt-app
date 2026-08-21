@@ -4,8 +4,7 @@ import { Text, Image, Linking } from 'react-native';
 import { View, useColorScheme } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@clerk/clerk-expo'; // <-- for session checks
-import { BACKEND_URL } from '@/constants';
+import { useAuth } from '@/lib/supabase';
 
 import OAuth from '@/components/OAuth';
 import CustomButton from '@/components/CustomButton';
@@ -15,29 +14,23 @@ export default function Welcome() {
   const { isLoaded, isSignedIn } = useAuth();
   const colorScheme = useColorScheme();
 
-  // We use a small flag to avoid running the redirect more than once.
   const [alreadyNavigated, setAlreadyNavigated] = useState(false);
 
   useEffect(() => {
-    // If Clerk is loaded and the user is signed in, go straight to home
     if (isLoaded && isSignedIn && !alreadyNavigated) {
       setAlreadyNavigated(true);
       router.replace('/(root)/(tabs)/home');
     }
   }, [isLoaded, isSignedIn, alreadyNavigated]);
 
-  // 1. If Clerk hasn't finished loading the user state yet, return null or a spinner.
   if (!isLoaded) {
-    return null; // or some <ActivityIndicator />
+    return null;
   }
 
-  // 2. If the user is signed in (and isLoaded is true), we also show nothing here.
-  //    We rely on the useEffect to do the redirect. This prevents flicker.
   if (isSignedIn) {
     return null;
   }
 
-  // 3. If we reached this point, user is not signed in. Render the welcome UI.
   return (
     <SafeAreaView className="flex-1 bg-theme-light-background dark:bg-theme-dark-background">
       {/* Logo */}
@@ -87,7 +80,7 @@ export default function Welcome() {
           and acknowledge our{' '}
           <Text
             className="text-theme-light-text-primary dark:text-theme-dark-text-primary"
-            onPress={() => Linking.openURL(`${BACKEND_URL}/privacy`)}
+            onPress={() => Linking.openURL('https://meteormeta.com/privacy')}
           >
             Privacy Policy
           </Text>

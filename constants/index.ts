@@ -10,7 +10,5 @@ export const icons = {
   person: require('@/assets/icons/person.png'),
   google: require('@/assets/icons/google.png'),
 };
-import Constants from 'expo-constants';
-export const images = {};
 
-export const BACKEND_URL = Constants.expoConfig?.extra?.BACKEND_URL;
+export const images = {};

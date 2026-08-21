@@ -1,7 +1,6 @@
 // store/useCharactersSlice.ts
 
-import { Alert } from 'react-native';
-import { BACKEND_URL } from '@/constants';
+import { themedAlert } from '@/components/ThemedAlert';
 
 export type Character = {
   id: string;
@@ -10,6 +9,30 @@ export type Character = {
   modelName: string;
   description: string;
   conversationStyle: string;
+  /**
+   * The setting/situation framing the chat (Character Card V2's `scenario`
+   * field). Injected as a "# Scenario" block in the system prompt — one of
+   * the top-3 fields for roleplay quality per SillyTavern community guides.
+   */
+  scenario?: string;
+  /**
+   * Optional opening line from the character creator (Chub.ai's
+   * `first_message` field). Shown as the first assistant message when
+   * the user starts a chat.
+   */
+  firstMessage?: string;
+  /**
+   * Per-card override for the system prompt rules. When present, replaces
+   * MicroGpt's hardcoded rules — the creator usually knows their card best.
+   * (Character Card V2 `system_prompt` field.)
+   */
+  systemPrompt?: string;
+  /**
+   * Per-card override for the post-history "stay in character" reminder.
+   * When present, replaces MicroGpt's hardcoded reminder injected before
+   * generation. (Character Card V2 `post_history_instructions` field.)
+   */
+  postHistoryInstructions?: string;
   publicId?: number | null;
   isReadOnly?: boolean;
   likes_count?: number;
@@ -18,7 +41,7 @@ export type Character = {
 
 export type PublicCharacter = {
   id: number;
-  clerk_id: string;
+  user_id: string;
   name: string;
   subtitle?: string;
   description: string;
@@ -53,11 +76,7 @@ export interface CharactersSlice {
 
   setEphemeralPublicCharacter: (pubChar: PublicCharacter | null) => void;
   setActiveFromEphemeralPublicChar: () => void;
-
-  loadUserPublishedCharacters: (clerkId: string) => Promise<void>;
 }
-
-const BACKEND = BACKEND_URL;
 
 const createCharactersSlice = (set: any, get: any): CharactersSlice => ({
   characters: [],
@@ -100,30 +119,38 @@ const createCharactersSlice = (set: any, get: any): CharactersSlice => ({
     const found = get().characters.find((c: Character) => c.id === charId);
     if (!found) return;
 
-    const downloadedNames = get().downloadedModels.map((f: string) =>
-      f.replace('.gguf', '')
-    );
-    let candidate = get().models.find(
-      (m: any) => m.name === found.modelName && downloadedNames.includes(m.name)
-    );
-    if (!candidate) {
-      const available = get().models.filter((m: any) =>
-        downloadedNames.includes(m.name)
+    // Characters are persona overlays, not model bindings. We do NOT swap
+    // selectedModel here — the user keeps whatever model is currently
+    // loaded. If nothing is loaded, fall back to the character's preferred
+    // model only as a convenience for first-time activation.
+    // In combo mode, check selectedTextModel; in legacy mode, check selectedModel
+    const comboMode = get().comboModeEnabled;
+    const currentSelected = comboMode ? get().selectedTextModel : get().selectedModel;
+    if (!currentSelected) {
+      const downloadedNames = get().downloadedModels.map((f: string) =>
+        f.replace('.gguf', '')
       );
-      if (available.length === 0) {
-        Alert.alert(
-          'No Models',
-          'No models are available. Please download a model first.'
+      const candidate =
+        get().models.find(
+          (m: any) =>
+            m.name === found.modelName && downloadedNames.includes(m.name),
+        ) ||
+        get().models.find((m: any) => downloadedNames.includes(m.name));
+      if (!candidate) {
+        themedAlert(
+          'No Model Loaded',
+          'Load a model first, then activate this character.',
         );
         return;
-      } else {
-        candidate = available[0];
       }
+      set({
+        activeCharacter: found,
+        selectedModel: candidate,
+        ...(comboMode ? { selectedTextModel: candidate } : {}),
+      });
+      return;
     }
-    set({
-      activeCharacter: found,
-      selectedModel: candidate,
-    });
+    set({ activeCharacter: found });
   },
 
   setLikedCharacters: (chars) => {
@@ -195,33 +222,39 @@ const createCharactersSlice = (set: any, get: any): CharactersSlice => ({
     const pubChar = get().ephemeralPublicCharacter;
     if (!pubChar) return;
 
-    const downloadedNames = get().downloadedModels.map((f: string) =>
-      f.replace('.gguf', '')
-    );
-    let candidate = get().models.find(
-      (m: any) =>
-        m.name === pubChar.model_name && downloadedNames.includes(m.name)
-    );
-    if (!candidate) {
-      const available = get().models.filter((m: any) =>
-        downloadedNames.includes(m.name)
+    // Characters are persona overlays, not model bindings. Use whatever
+    // model is currently loaded. Only fall back to selecting a model if
+    // nothing is loaded yet (first-time activation convenience).
+    const comboMode = get().comboModeEnabled;
+    const currentSelected = comboMode ? get().selectedTextModel : get().selectedModel;
+    let modelToUse = currentSelected;
+
+    if (!modelToUse) {
+      const downloadedNames = get().downloadedModels.map((f: string) =>
+        f.replace('.gguf', '')
       );
-      if (available.length === 0) {
-        Alert.alert(
-          'No Models',
-          'No models are available. Please download a model first.'
+      modelToUse =
+        get().models.find(
+          (m: any) =>
+            m.name === pubChar.model_name && downloadedNames.includes(m.name),
+        ) ||
+        get().models.find((m: any) => downloadedNames.includes(m.name)) ||
+        null;
+      if (!modelToUse) {
+        themedAlert(
+          'No Model Loaded',
+          'Load a model first, then activate this character.',
         );
         return;
-      } else {
-        candidate = available[0];
       }
     }
+
     set({
       activeCharacter: {
         id: Date.now().toString(),
         name: pubChar.name,
         subtitle: pubChar.subtitle ?? '',
-        modelName: candidate?.name ?? pubChar.model_name,
+        modelName: modelToUse.name,
         description: pubChar.description,
         conversationStyle: pubChar.conversation_style,
         publicId: pubChar.id,
@@ -229,53 +262,13 @@ const createCharactersSlice = (set: any, get: any): CharactersSlice => ({
         likes_count: pubChar.likes_count,
         downloads_count: pubChar.downloads_count,
       },
-      selectedModel: candidate || null,
+      ...(currentSelected ? {} : {
+        selectedModel: modelToUse,
+        ...(comboMode ? { selectedTextModel: modelToUse } : {}),
+      }),
     });
   },
 
-  loadUserPublishedCharacters: async (clerkId) => {
-    try {
-      const res = await fetch(`${BACKEND}/publishedCharacters/${clerkId}`);
-      if (!res.ok) {
-        throw new Error('Failed to fetch user-published characters');
-      }
-      const data = await res.json();
-      const chars: PublicCharacter[] = data.data || [];
-      set((s: any) => {
-        const newChars = [...s.characters];
-        for (const pubChar of chars) {
-          const existingIndex = newChars.findIndex(
-            (c: Character) => c.publicId === pubChar.id
-          );
-          const base = {
-            name: pubChar.name,
-            subtitle: pubChar.subtitle ?? '',
-            modelName: pubChar.model_name,
-            description: pubChar.description,
-            conversationStyle: pubChar.conversation_style,
-            publicId: pubChar.id,
-            isReadOnly: false,
-            likes_count: pubChar.likes_count,
-            downloads_count: pubChar.downloads_count,
-          };
-          if (existingIndex >= 0) {
-            newChars[existingIndex] = {
-              ...newChars[existingIndex],
-              ...base,
-            };
-          } else {
-            newChars.push({
-              id: Date.now().toString(),
-              ...base,
-            });
-          }
-        }
-        return { characters: newChars };
-      });
-    } catch (err) {
-      console.error('loadUserPublishedCharacters error:', err);
-    }
-  },
 });
 
 export default createCharactersSlice;

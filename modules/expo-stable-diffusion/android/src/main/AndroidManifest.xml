@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Force native library extraction during install. Modern Android
+         defaults to extractNativeLibs="false" (loading .so directly from
+         the APK via mmap), which works for System.loadLibrary() but NOT
+         for ProcessBuilder — you can't exec a file inside a ZIP. We need
+         our sd-server binary to land on disk at nativeLibraryDir, which
+         is the only directory on Android with SELinux execute permission
+         for app processes.
+
+         This affects ALL native libs in the APK (llama.rn, expo modules,
+         etc.) — they'll be extracted to disk during install, which
+         increases installed size by ~100 MB but has zero functional
+         impact. This is the same approach local-dream uses. -->
+    <application
+        android:extractNativeLibs="true"
+        tools:replace="android:extractNativeLibs" />
+
+</manifest>

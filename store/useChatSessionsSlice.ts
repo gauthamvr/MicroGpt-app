@@ -1,12 +1,17 @@
 // store/useChatSessionsSlice.ts
 
-import { Alert } from 'react-native';
+import { themedAlert } from '@/components/ThemedAlert';
 
 export type ChatMessage = {
   id: string;
   sender: 'User' | 'Model';
   message: string;
   isStreaming?: boolean;
+  imageUri?: string;
+  /** True while an [IMG: ...] tag was detected and image is being generated */
+  isGeneratingImage?: boolean;
+  /** The prompt extracted from [IMG: ...], stored for display/retry */
+  imagePrompt?: string;
 };
 
 export type ChatSession = {
@@ -110,7 +115,7 @@ const createChatSessionsSlice = (set: any, get: any): ChatSessionsSlice => ({
         chatHistory: foundSession.messages,
       });
     } else {
-      Alert.alert('Error', 'Could not find that chat session.');
+      themedAlert('Error', 'Could not find that chat session.');
     }
   },
 
@@ -144,26 +149,57 @@ const createChatSessionsSlice = (set: any, get: any): ChatSessionsSlice => ({
   },
 
   updateChatMessage: (id, update) => {
+    // Hot path — called ~20×/sec during token streaming. The previous
+    // implementation walked EVERY chatSession and rebuilt each session's
+    // `messages` array on every call. With 20 sessions × 50 messages
+    // that's ~1000 object allocations per flush × 20 flushes/sec =
+    // 20 000 allocations per second just for session bookkeeping.
+    // Over a 30-second story it pegged the JS thread hard enough for
+    // Android to raise the "app isn't responding / force stop" dialog.
+    //
+    // Now we only rebuild the active session's `messages` (and only if
+    // the message actually belongs to it). Non-active sessions keep
+    // their existing object identity.
     const state = get();
-    set({
-      chatHistory: state.chatHistory.map((msg: ChatMessage) =>
-        msg.id === id
-          ? typeof update === 'function'
-            ? { ...msg, ...update(msg) }
-            : { ...msg, ...update }
-          : msg
-      ),
-      chatSessions: state.chatSessions.map((session: ChatSession) => ({
-        ...session,
-        messages: session.messages.map((msg: ChatMessage) =>
-          msg.id === id
-            ? typeof update === 'function'
-              ? { ...msg, ...update(msg) }
-              : { ...msg, ...update }
-            : msg
-        ),
-      })),
-    });
+    const applyUpdate = (msg: ChatMessage): ChatMessage =>
+      typeof update === 'function'
+        ? { ...msg, ...update(msg) }
+        : { ...msg, ...update };
+
+    let nextHistory = state.chatHistory;
+    let historyChanged = false;
+    const historyIdx = state.chatHistory.findIndex((m: ChatMessage) => m.id === id);
+    if (historyIdx >= 0) {
+      nextHistory = state.chatHistory.slice();
+      nextHistory[historyIdx] = applyUpdate(nextHistory[historyIdx]);
+      historyChanged = true;
+    }
+
+    let nextSessions = state.chatSessions;
+    const activeId = state.currentSessionId;
+    if (activeId && historyChanged) {
+      const sessionIdx = state.chatSessions.findIndex((s: ChatSession) => s.id === activeId);
+      if (sessionIdx >= 0) {
+        nextSessions = state.chatSessions.slice();
+        nextSessions[sessionIdx] = {
+          ...nextSessions[sessionIdx],
+          messages: nextHistory,
+        };
+      }
+    } else if (!activeId && historyChanged) {
+      // No active session (shouldn't happen during streaming) — fall back
+      // to searching every session for the message.
+      nextSessions = state.chatSessions.map((session: ChatSession) => {
+        const i = session.messages.findIndex((m) => m.id === id);
+        if (i < 0) return session;
+        const msgs = session.messages.slice();
+        msgs[i] = applyUpdate(msgs[i]);
+        return { ...session, messages: msgs };
+      });
+    }
+
+    if (!historyChanged && nextSessions === state.chatSessions) return;
+    set({ chatHistory: nextHistory, chatSessions: nextSessions });
   },
 
   removeSession: (sessionId) => {
@@ -196,6 +232,8 @@ const createChatSessionsSlice = (set: any, get: any): ChatSessionsSlice => ({
       currentSessionId: null,
       chatHistory: [],
       selectedModel: null,
+      selectedTextModel: null,
+      selectedImageGenModel: null,
     });
   },
 });

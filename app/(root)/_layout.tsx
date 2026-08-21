@@ -1,7 +1,7 @@
 // app/(root)/_layout.tsx
 import { Stack } from 'expo-router';
 import React, { useEffect } from 'react';
-import { useStore } from '@/store'; // Ensure correct path
+import { useStore } from '@/store';
 import { useColorScheme } from 'react-native';
 
 const Layout = () => {
@@ -12,9 +12,11 @@ const Layout = () => {
     initializeModels();
   }, [initializeModels]);
 
+  // With react-native-blob-util, downloads continue in background natively.
+  // No AppState pause/resume needed -- the native HTTP client handles it.
+
   return (
     <Stack
-      // Set the background color to avoid white flashes
       screenOptions={{
         contentStyle: {
           backgroundColor: colorScheme === 'dark' ? '#0D0D0D' : '#FCFCFC',
@@ -23,8 +25,9 @@ const Layout = () => {
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="ProfileDetailPage" options={{ headerShown: false }} />
+      <Stack.Screen name="DownloadsPage" options={{ headerShown: false }} />
     </Stack>
   );
 };
 
-export default Layout; // Ensure default export
+export default Layout;

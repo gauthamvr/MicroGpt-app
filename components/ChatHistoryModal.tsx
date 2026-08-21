@@ -1,13 +1,16 @@
 // components/ChatHistoryModal.tsx
-import React from 'react';
+import React, { useMemo } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { FlatList, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { themedAlert } from '@/components/ThemedAlert';
 import { useStore } from '@/store';
 import { useRouter } from 'expo-router';
 
 const ChatSessionsList = () => {
-  const { chatSessions, switchToSession, removeSession, currentSessionId } =
-    useStore();
+  const chatSessions = useStore((s) => s.chatSessions);
+  const switchToSession = useStore((s) => s.switchToSession);
+  const removeSession = useStore((s) => s.removeSession);
+  const currentSessionId = useStore((s) => s.currentSessionId);
   const router = useRouter();
 
   const handlePressSession = (sessionId: string) => {
@@ -16,7 +19,7 @@ const ChatSessionsList = () => {
   };
 
   const handleLongPressSession = (sessionId: string) => {
-    Alert.alert(
+    themedAlert(
       'Delete Chat',
       'Are you sure you want to delete this chat?',
       [
@@ -26,15 +29,20 @@ const ChatSessionsList = () => {
           style: 'destructive',
           onPress: () => removeSession(sessionId),
         },
-      ],
-      { cancelable: true }
+      ]
     );
   };
 
-  // Filter sessions that have at least one "User" message
-  const sessionsWithUserMessage = chatSessions
-    .filter((s) => s.messages.some((m) => m.sender === 'User'))
-    .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
+  // Filter sessions that have at least one "User" message.
+  // Memoized so the filter+sort only runs when chatSessions actually
+  // changes, not on every render of this modal.
+  const sessionsWithUserMessage = useMemo(
+    () =>
+      chatSessions
+        .filter((s) => s.messages.some((m) => m.sender === 'User'))
+        .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10)),
+    [chatSessions],
+  );
 
   const renderSessionItem = ({
     item,
@@ -84,6 +92,10 @@ const ChatSessionsList = () => {
               keyExtractor={(session) => session.id}
               contentContainerStyle={{ paddingVertical: 8 }}
               showsVerticalScrollIndicator={false}
+              removeClippedSubviews
+              initialNumToRender={14}
+              windowSize={7}
+              maxToRenderPerBatch={10}
             />
           </>
         )}
@@ -91,7 +103,7 @@ const ChatSessionsList = () => {
       {/* Footer with Version Number */}
       <View className="px-4 py-2">
         <Text className="text-xs text-gray-500 dark:text-gray-400 text-center">
-          v1.2.7
+          v1.3.1
         </Text>
       </View>
     </SafeAreaView>

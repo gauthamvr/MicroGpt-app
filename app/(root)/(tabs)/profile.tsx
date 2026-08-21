@@ -1,67 +1,60 @@
 // app/(root)/(tabs)/profile.tsx
 
-import React, { useState, useEffect } from 'react';
-import { useUser, useClerk } from '@clerk/clerk-expo';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useAuth, signOut } from '@/lib/supabase';
 import {
-  Image,
   ScrollView,
   Text,
   TouchableOpacity,
-  Alert,
   View,
   useColorScheme,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { themedAlert } from '@/components/ThemedAlert';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { MaterialIcons } from '@expo/vector-icons';
-import { useStore } from '@/store';
+import { useStore, formatBytes, isImageGenModel, getModelFileName } from '@/store';
 import CreateOrEditCharacterModal from '@/components/CreateOrEditCharacterModal';
 import DownloadModel from '@/components/DownloadModel';
-import { BACKEND_URL } from '@/constants';
+import {
+  getProfileBundle,
+  deletePublicCharacter,
+  toggleCharacterLike,
+  deleteOwnAccount,
+} from '@/lib/supabase-api';
 
 // NEW imports
 import ProfileEditModal from '@/components/ProfileEditModal';
-import BecomeProModal from '@/components/BecomeProModal';
-
-const BASE_URL = BACKEND_URL;
-
-// 1) Add a short-timeout helper so fetch won't hang too long
-function fetchWithTimeout(
-  resource: string,
-  options: RequestInit = {},
-  timeout = 2000
-) {
-  return Promise.race([
-    fetch(resource, options),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout')), timeout)
-    ),
-  ]);
-}
 
 const Profile = () => {
-  const { user } = useUser();
-  const { signOut } = useClerk();
+  const { user } = useAuth();
   const router = useRouter();
   const colorScheme = useColorScheme();
 
   const headingColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const cardBgColor = colorScheme === 'dark' ? '#242424' : '#f5f5f5';
 
-  const {
-    characters,
-    deleteCharacter,
-    downloadedModels,
-    setActiveCharacter,
-    setLikedCharacters,
-    removeLikedCharacter,
-    updateCharacter,
-    removeLocalPublicCharacter,
-    resetAllUserData,
-    // remove: loadUserPublishedCharacters
-  } = useStore();
+  // Per-field selectors so Profile doesn't re-render on every
+  // chatHistory update while the user is streaming on Home.
+  const characters = useStore((s) => s.characters);
+  const deleteCharacter = useStore((s) => s.deleteCharacter);
+  const downloadedModels = useStore((s) => s.downloadedModels);
+  const setActiveCharacter = useStore((s) => s.setActiveCharacter);
+  const setLikedCharacters = useStore((s) => s.setLikedCharacters);
+  const removeLikedCharacter = useStore((s) => s.removeLikedCharacter);
+  const updateCharacter = useStore((s) => s.updateCharacter);
+  const removeLocalPublicCharacter = useStore((s) => s.removeLocalPublicCharacter);
+  const resetAllUserData = useStore((s) => s.resetAllUserData);
+  const models = useStore((s) => s.models);
+  const activeDownloads = useStore((s) => s.activeDownloads);
+  const downloadProgress = useStore((s) => s.downloadProgress);
+  const downloadStats = useStore((s) => s.downloadStats);
+  const cancelDownload = useStore((s) => s.cancelDownload);
+  const deleteModel = useStore((s) => s.deleteModel);
+  const downloadModel = useStore((s) => s.downloadModel);
+  const selectedModel = useStore((s) => s.selectedModel);
+  const selectModel = useStore((s) => s.selectModel);
 
   const [isCharModalVisible, setIsCharModalVisible] = useState(false);
   const [editCharacter, setEditCharacter] = useState<any>(null);
@@ -75,70 +68,56 @@ const Profile = () => {
 
   const [showProfileEditModal, setShowProfileEditModal] =
     useState<boolean>(false);
-  const [showBecomeProModal, setShowBecomeProModal] = useState<boolean>(false);
 
-  // Clerk user info
-  const clerkId = user?.id;
-  // const avatarUrl = { uri: user?.imageUrl ?? '' };
-  const avatarUrl = require('@/assets/images/icon.png');
+  const userId = user?.id;
 
   // Single "fetchProfileBundle" call
-  const fetchProfileBundle = async (theClerkId: string) => {
+  const fetchProfileBundleData = async () => {
     setLoadingDbUser(true);
     try {
-      const res = await fetchWithTimeout(
-        `${BASE_URL}/profileBundle/${theClerkId}`,
-        {},
-        3000 // e.g. 5 second timeout
-      );
-      const data = await res.json();
-      if (res.ok) {
-        // data => { dbUser, published, liked }
-        setDbUser(data.dbUser);
+      const data = await getProfileBundle();
+      // data => { dbUser, published, liked }
+      setDbUser(data.dbUser);
 
-        // 1) Merge "published" into local store
-        // We'll replicate your old "loadUserPublishedCharacters" logic:
-        const publishedChars = data.published || [];
-        // We'll unify them with local store
-        // create or update them as read/write
-        useStore.setState((s: any) => {
-          const newChars = [...s.characters];
-          for (const pubChar of publishedChars) {
-            const existingIndex = newChars.findIndex(
-              (c: any) => c.publicId === pubChar.id
-            );
-            const base = {
-              name: pubChar.name,
-              subtitle: pubChar.subtitle ?? '',
-              modelName: pubChar.model_name,
-              description: pubChar.description,
-              conversationStyle: pubChar.conversation_style,
-              publicId: pubChar.id,
-              isReadOnly: false,
-              likes_count: pubChar.likes_count,
-              downloads_count: pubChar.downloads_count,
+      // 1) Merge "published" into local store
+      const publishedChars = data.published || [];
+      useStore.setState((s: any) => {
+        const newChars = [...s.characters];
+        for (const pubChar of publishedChars) {
+          const existingIndex = newChars.findIndex(
+            (c: any) => c.publicId === pubChar.id
+          );
+          const base = {
+            name: pubChar.name,
+            subtitle: pubChar.subtitle ?? '',
+            modelName: pubChar.model_name,
+            description: pubChar.description,
+            conversationStyle: pubChar.conversation_style,
+            publicId: pubChar.id,
+            isReadOnly: false,
+            likes_count: pubChar.likes_count,
+            downloads_count: pubChar.downloads_count,
+          };
+          if (existingIndex >= 0) {
+            newChars[existingIndex] = {
+              ...newChars[existingIndex],
+              ...base,
             };
-            if (existingIndex >= 0) {
-              newChars[existingIndex] = {
-                ...newChars[existingIndex],
-                ...base,
-              };
-            } else {
-              newChars.push({
-                id: Date.now().toString(),
-                ...base,
-              });
-            }
+          } else {
+            newChars.push({
+              id: Date.now().toString(),
+              ...base,
+            });
           }
-          return { characters: newChars };
-        });
+        }
+        return { characters: newChars };
+      });
 
-        // 2) Set "liked" in store
-        const likedChars = data.liked || [];
-        setLikedCharacters(likedChars);
-      }
+      // 2) Set "liked" in store
+      const likedChars = data.liked || [];
+      setLikedCharacters(likedChars);
     } catch (error) {
-      console.error('fetchProfileBundle error:', error);
+      if (__DEV__) console.error('fetchProfileBundle error:', error);
     } finally {
       setLoadingDbUser(false);
     }
@@ -146,9 +125,9 @@ const Profile = () => {
 
   // On sign in, do a single "profileBundle" call
   useEffect(() => {
-    if (!clerkId) return;
-    fetchProfileBundle(clerkId);
-  }, [clerkId]);
+    if (!userId) return;
+    fetchProfileBundleData();
+  }, [userId]);
 
   const handleSignOut = async () => {
     try {
@@ -156,17 +135,53 @@ const Profile = () => {
       resetAllUserData();
       router.replace('/(root)/(tabs)/home');
     } catch (error: any) {
-      console.error('Sign out error:', error);
+      if (__DEV__) console.error('Sign out error:', error);
     }
   };
 
   const confirmSignOut = () => {
-    Alert.alert(
+    themedAlert(
       'Confirm Logout',
       'All unsaved data will be lost once logged out. Are you sure you want to logout?',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Logout', style: 'destructive', onPress: handleSignOut },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = async () => {
+    try {
+      await deleteOwnAccount();
+      resetAllUserData();
+      await signOut();
+      router.replace('/(root)/(tabs)/home');
+    } catch (error: any) {
+      if (__DEV__) console.error('Delete account error:', error);
+      themedAlert('Error', 'Failed to delete account. Please try again.');
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    themedAlert(
+      'Delete Account',
+      'This will permanently delete your account, all your characters, and all associated data. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            themedAlert(
+              'Are you sure?',
+              'This is your last chance. All your data will be permanently deleted.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Yes, Delete', style: 'destructive', onPress: handleDeleteAccount },
+              ]
+            );
+          },
+        },
       ]
     );
   };
@@ -185,7 +200,7 @@ const Profile = () => {
   };
 
   const handleDelete = (charId: string) => {
-    Alert.alert(
+    themedAlert(
       'Confirm Delete',
       'Are you sure you want to delete this character?',
       [
@@ -197,11 +212,9 @@ const Profile = () => {
             const found = characters.find((c) => c.id === charId);
             if (found?.publicId) {
               try {
-                await fetch(`${BASE_URL}/publicCharacters/${found.publicId}`, {
-                  method: 'DELETE',
-                });
+                await deletePublicCharacter(found.publicId);
               } catch (err) {
-                console.error('Failed to delete from server', err);
+                if (__DEV__) console.error('Failed to delete from server', err);
               }
             }
             deleteCharacter(charId);
@@ -215,56 +228,50 @@ const Profile = () => {
     const char = characters.find((c) => c.id === charId);
     if (!char) return;
     setActiveCharacter(charId);
-    const st = useStore.getState();
-    if (!st.activeCharacter) {
-      return;
+    // setActiveCharacter is synchronous — check if it succeeded
+    // (it bails with an alert if no model is loaded)
+    if (useStore.getState().activeCharacter?.id) {
+      router.push('/(root)/(tabs)/home');
     }
-    router.push('/(root)/(tabs)/home');
   };
 
-  // "Unlike" is already implemented as an immediate local remove
-  // => no big re-fetch needed
   const handleUnlikePublicChar = async (publicId: number) => {
-    if (!clerkId) return;
+    if (!userId) return;
     try {
-      const res = await fetch(
-        `${BASE_URL}/publicCharacters/${publicId}/toggle-like`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userClerkId: clerkId }),
-        }
-      );
-      const data = await res.json();
-      if (res.ok) {
-        removeLikedCharacter(publicId);
-        removeLocalPublicCharacter(publicId);
-      } else {
-        console.error('Error unliking:', data.error);
-      }
+      await toggleCharacterLike(publicId);
+      removeLikedCharacter(publicId);
+      removeLocalPublicCharacter(publicId);
     } catch (err) {
-      console.error('handleUnlike error:', err);
+      if (__DEV__) console.error('handleUnlike error:', err);
     }
   };
 
   const handleChooseModel = (charId: string, newModelName: string) => {
     const isDownloaded = downloadedModels.includes(`${newModelName}.gguf`);
     if (!isDownloaded) {
-      Alert.alert('Model Not Downloaded', 'Please download this model first.');
+      themedAlert('Model Not Downloaded', 'Please download this model first.');
       return;
     }
     updateCharacter(charId, { modelName: newModelName });
     setShowDownloadModalForCharId(null);
   };
 
-  // Edit Profile click (Pro gating)
   const handleEditProfileClick = () => {
-    if (dbUser?.is_pro) {
-      setShowProfileEditModal(true);
-    } else {
-      setShowBecomeProModal(true);
-    }
+    setShowProfileEditModal(true);
   };
+
+  // Split once per characters-array change, not on every render. The
+  // previous inline .filter() ran three times per render (own-count,
+  // liked-count, own-list) — on long lists it added up, and every
+  // unrelated store update re-ran them all.
+  const ownCharacters = useMemo(
+    () => characters.filter((ch: any) => !ch.isReadOnly),
+    [characters],
+  );
+  const likedCharacters = useMemo(
+    () => characters.filter((ch: any) => ch.isReadOnly),
+    [characters],
+  );
 
   const renderCharacterCard = (c: any) => {
     const id = c.id;
@@ -424,44 +431,19 @@ const Profile = () => {
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
       >
-        {/* Avatar with Pro Badge */}
+        {/* Avatar — default silhouette until the user uploads one */}
         <View
           style={{
-            position: 'relative',
             alignSelf: 'center',
             marginTop: 24,
             marginBottom: 24,
           }}
         >
-          <Image
-            source={avatarUrl}
-            style={{
-              width: 120,
-              height: 120,
-              borderRadius: 60,
-            }}
+          <Ionicons
+            name="person-circle-outline"
+            size={120}
+            color={headingColor}
           />
-          {dbUser?.is_pro && (
-            <View
-              style={{
-                position: 'absolute',
-                bottom: 5,
-                left: 0,
-                right: 0,
-                alignItems: 'center',
-              }}
-            >
-              <View
-                style={{
-                  backgroundColor: '#fff',
-                  borderRadius: 10,
-                  padding: 2,
-                }}
-              >
-                <MaterialIcons name="verified" size={20} color="#1DA1F2" />
-              </View>
-            </View>
-          )}
         </View>
 
         {/* User info from DB (if available) */}
@@ -496,9 +478,6 @@ const Profile = () => {
                 Bio: {dbUser.bio}
               </Text>
             ) : null}
-            <Text style={{ fontSize: 14, color: '#666' }}>
-              Pro: {dbUser.is_pro ? 'Yes' : 'No'}
-            </Text>
           </View>
         ) : (
           <View
@@ -516,21 +495,80 @@ const Profile = () => {
           </View>
         )}
 
-        {/* Logout Button */}
+        {/* Logout & Delete Account */}
+        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
+          <TouchableOpacity
+            onPress={confirmSignOut}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: cardBgColor,
+              borderRadius: 20,
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+            }}
+          >
+            <Ionicons name="log-out-outline" size={18} color="#666" />
+            <Text style={{ marginLeft: 6, color: headingColor }}>Logout</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={confirmDeleteAccount}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: colorScheme === 'dark' ? '#3A1515' : '#FEE2E2',
+              borderRadius: 20,
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+            }}
+          >
+            <Ionicons name="trash-outline" size={18} color="#EF4444" />
+            <Text style={{ marginLeft: 6, color: '#EF4444' }}>Delete Account</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Downloads button */}
         <TouchableOpacity
-          onPress={confirmSignOut}
+          onPress={() => router.push('/(root)/DownloadsPage')}
           style={{
-            alignSelf: 'center',
             flexDirection: 'row',
             alignItems: 'center',
+            justifyContent: 'space-between',
             backgroundColor: cardBgColor,
-            borderRadius: 20,
-            paddingHorizontal: 16,
-            paddingVertical: 8,
+            borderRadius: 10,
+            padding: 14,
+            marginTop: 24,
           }}
         >
-          <Ionicons name="log-out-outline" size={18} color="#666" />
-          <Text style={{ marginLeft: 6, color: headingColor }}>Logout</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="download-outline" size={22} color={headingColor} />
+            <Text style={{ color: headingColor, fontSize: 16, fontWeight: '600', marginLeft: 10 }}>
+              Downloads
+            </Text>
+            {activeDownloads instanceof Set && activeDownloads.size > 0 && (
+              <View style={{
+                backgroundColor: '#3B82F6',
+                borderRadius: 10,
+                minWidth: 20,
+                height: 20,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginLeft: 8,
+                paddingHorizontal: 6,
+              }}>
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                  {activeDownloads.size}
+                </Text>
+              </View>
+            )}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ color: colorScheme === 'dark' ? '#6B7280' : '#9CA3AF', fontSize: 13, marginRight: 4 }}>
+              {downloadedModels.length} model{downloadedModels.length !== 1 ? 's' : ''}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={colorScheme === 'dark' ? '#6B7280' : '#9CA3AF'} />
+          </View>
         </TouchableOpacity>
 
         {/* My Characters */}
@@ -561,20 +599,18 @@ const Profile = () => {
           </View>
 
           {/* If user has zero non-readOnly characters */}
-          {characters.filter((ch) => !ch.isReadOnly).length === 0 && (
+          {ownCharacters.length === 0 && (
             <Text style={{ fontStyle: 'italic', color: '#666' }}>
               No characters created yet. Tap + to create one.
             </Text>
           )}
 
           {/* Show local non-readOnly characters */}
-          {characters
-            .filter((ch) => !ch.isReadOnly)
-            .map((char) => renderCharacterCard(char))}
+          {ownCharacters.map((char: any) => renderCharacterCard(char))}
         </View>
 
         {/* Liked Public Characters */}
-        {characters.filter((ch) => ch.isReadOnly).length > 0 && (
+        {likedCharacters.length > 0 && (
           <View style={{ marginTop: 24 }}>
             <Text
               style={{
@@ -586,9 +622,7 @@ const Profile = () => {
             >
               Liked Public Characters
             </Text>
-            {characters
-              .filter((ch) => ch.isReadOnly)
-              .map((char) => renderCharacterCard(char))}
+            {likedCharacters.map((char: any) => renderCharacterCard(char))}
           </View>
         )}
       </ScrollView>
@@ -611,13 +645,12 @@ const Profile = () => {
         />
       )}
 
-      {/* Profile Edit Modal (for Pro users) */}
+      {/* Profile Edit Modal */}
       {dbUser && (
         <ProfileEditModal
           visible={showProfileEditModal}
           onClose={() => setShowProfileEditModal(false)}
           initialUserData={{
-            clerk_id: dbUser.clerk_id,
             username: dbUser.username,
             display_name: dbUser.display_name,
             bio: dbUser.bio,
@@ -631,17 +664,6 @@ const Profile = () => {
         />
       )}
 
-      {/* Become Pro Modal (for non-Pro users) */}
-      {showBecomeProModal && (
-        <BecomeProModal
-          visible={showBecomeProModal}
-          onClose={() => setShowBecomeProModal(false)}
-          onPurchaseSuccess={() => {
-            // Mark user as pro after successful purchase.
-            setDbUser((prev: any) => ({ ...prev, is_pro: true }));
-          }}
-        />
-      )}
     </SafeAreaView>
   );
 };

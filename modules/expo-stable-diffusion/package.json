@@ -1,0 +1,8 @@
+{
+  "name": "expo-stable-diffusion",
+  "version": "0.1.0",
+  "description": "Local Expo module for on-device text-to-image generation in MicroGPT. Android: stable-diffusion.cpp (sd-server subprocess) + local-dream (Qualcomm GPU/NPU). iOS: Apple Core ML via apple/ml-stable-diffusion (behind #if canImport). Shared JS contract in src/index.ts.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true
+}

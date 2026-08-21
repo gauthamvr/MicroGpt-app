@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Required so we can show our own download notification on Android 13+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Hint to the OS that this app legitimately needs to download large
+         files in the background. Some OEMs respect this; pure Android
+         ignores it. Without a foreground service this is the primary
+         defense against doze killing long downloads. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application>
+        <!-- Receives the Cancel action from download notifications.
+             Not exported — only our own PendingIntent can trigger it. -->
+        <receiver
+            android:name="expo.modules.downloadmanager.CancelDownloadReceiver"
+            android:exported="false" />
+    </application>
+
+</manifest>

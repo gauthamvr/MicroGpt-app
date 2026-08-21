@@ -1,0 +1,39 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.downloadmanager'
+version = '0.1.0'
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+android {
+  namespace 'expo.modules.downloadmanager'
+  defaultConfig {
+    minSdkVersion safeExtGet('minSdkVersion', 24)
+    targetSdkVersion safeExtGet('targetSdkVersion', 34)
+    compileSdkVersion safeExtGet('compileSdkVersion', 34)
+    versionCode 1
+    versionName '0.1.0'
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  kotlinOptions {
+    jvmTarget = JavaVersion.VERSION_17.toString()
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'androidx.core:core-ktx:1.13.1'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+  // OkHttp for direct HTTP download — replaces Android's system
+  // DownloadManager. React Native already ships an OkHttp 4.x on the
+  // classpath, but we declare it explicitly so our module compiles in
+  // isolation and doesn't break if RN changes the transitive version.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

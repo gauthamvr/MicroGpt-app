@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "ios"],
+  "android": {
+    "modules": ["expo.modules.downloadmanager.ExpoDownloadManagerModule"]
+  },
+  "ios": {
+    "modules": ["ExpoDownloadManagerModule"]
+  }
+}
