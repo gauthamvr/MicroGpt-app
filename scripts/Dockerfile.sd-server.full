@@ -1,0 +1,109 @@
+# From-scratch cross-compile of leejet/stable-diffusion.cpp's `sd-server`
+# for Android arm64-v8a, with the Adreno OpenCL backend enabled and the
+# 16-KB page alignment linker flags Android 15+ needs.
+#
+# This is the self-contained recipe. `Dockerfile.sd-server` is the fast
+# variant: it starts FROM the `sd-opencl-builder:latest` image that this
+# file produces, so an incremental sd.cpp bump skips the NDK download and
+# the OpenCL setup (~20 min saved).
+#
+# scripts/build-sd-server.sh picks between them automatically — it uses the
+# fast path when `sd-opencl-builder:latest` exists locally and this one
+# otherwise. To build the base image by hand:
+#
+#   docker build -f scripts/Dockerfile.sd-server.full -t sd-opencl-builder:latest .
+#
+# The OpenCL steps follow llama.cpp's documented Android cross-compile
+# procedure (docs/backend/OPENCL.md), which sd.cpp inherits through ggml:
+# OpenCL headers are copied into the NDK sysroot and an OpenCL ICD loader
+# is built to give the linker a libOpenCL.so to resolve against. At runtime
+# the device's own vendor driver provides the real implementation.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ANDROID_NDK=/opt/android-ndk-r27c
+ENV NDK_SYSROOT=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake ninja-build git wget unzip ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─── Android NDK r27c ──────────────────────────────────────────────────
+# r27 is the last NDK that does NOT align executables to 16 KB by default,
+# which is why the cmake step below passes the linker flags explicitly.
+RUN wget -q https://dl.google.com/android/repository/android-ndk-r27c-linux.zip -O /tmp/ndk.zip && \
+    unzip -q /tmp/ndk.zip -d /opt && \
+    rm /tmp/ndk.zip && \
+    test -d "$ANDROID_NDK" || (echo "NDK layout unexpected" && ls /opt && false)
+
+# ─── OpenCL headers into the NDK sysroot ───────────────────────────────
+# Must be recent enough to carry `cl_mem_properties` and the Qualcomm
+# CL_LARGE_BUFFER_QCOM path that current ggml-opencl uses.
+RUN git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers.git /tmp/opencl-headers && \
+    mkdir -p "$NDK_SYSROOT/usr/include/CL" && \
+    cp -r /tmp/opencl-headers/CL/* "$NDK_SYSROOT/usr/include/CL/" && \
+    rm -rf /tmp/opencl-headers
+
+# ─── libOpenCL.so stub for the linker ──────────────────────────────────
+RUN git clone --depth 1 https://github.com/KhronosGroup/OpenCL-ICD-Loader.git /tmp/icd && \
+    cd /tmp/icd && mkdir build && cd build && \
+    cmake .. -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+      -DOPENCL_ICD_LOADER_HEADERS_DIR="$NDK_SYSROOT/usr/include" \
+      -DANDROID_ABI=arm64-v8a \
+      -DANDROID_PLATFORM=24 \
+      -DANDROID_STL=c++_shared && \
+    ninja && \
+    cp libOpenCL.so "$NDK_SYSROOT/usr/lib/aarch64-linux-android/" && \
+    rm -rf /tmp/icd
+
+# ─── stable-diffusion.cpp ──────────────────────────────────────────────
+# Pinned to a known-good master commit (April 29, 2026 — includes the
+# VAE-tiling memory leak fix #1465 and the dpm++2s_a fix #1435). Keep this
+# in sync with SD_CPP_COMMIT in Dockerfile.sd-server.
+ARG SD_CPP_COMMIT=3d6064b
+
+RUN git clone https://github.com/leejet/stable-diffusion.cpp.git /src/sd.cpp && \
+    cd /src/sd.cpp && \
+    git checkout --force "$SD_CPP_COMMIT" && \
+    # Hard-skip the server WebUI submodule: we drive the HTTP API directly,
+    # and its pinned upstream commit periodically gets GC'd, which breaks
+    # `submodule update --recursive` for everyone. ggml is the only
+    # submodule the build actually needs.
+    git submodule deinit -f examples/server/frontend 2>/dev/null || true && \
+    git config --file .gitmodules --remove-section submodule.examples/server/frontend 2>/dev/null || true && \
+    git rm --cached -f examples/server/frontend 2>/dev/null || true && \
+    rm -rf .git/modules/examples/server/frontend examples/server/frontend && \
+    git submodule update --init --recursive --force
+
+WORKDIR /src/sd.cpp
+
+RUN rm -rf build && mkdir build && cd build && \
+    cmake .. -G Ninja \
+      -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a \
+      -DANDROID_PLATFORM=android-30 \
+      -DGGML_OPENMP=OFF \
+      -DGGML_VULKAN=OFF \
+      -DGGML_OPENCL=ON \
+      -DGGML_OPENCL_TARGET_VERSION=300 \
+      -DGGML_BACKEND_DL=OFF \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DSD_BUILD_EXAMPLES=ON \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+
+RUN cd build && ninja -j$(nproc) sd-server
+
+# Strip and rename to lib*.so so Android's APK packager extracts it into
+# nativeLibraryDir with the execute bit set. It is an ELF executable, not a
+# shared library — see BinaryResolver.kt.
+RUN mkdir -p /work/output && \
+    $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
+      build/bin/sd-server -o /work/output/libsd-server.so && \
+    ls -la /work/output/libsd-server.so && \
+    echo "=== BUILD SUCCESS ==="
+
+CMD ["sh", "-c", "ls -la /work/output/"]

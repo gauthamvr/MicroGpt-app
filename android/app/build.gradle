@@ -90,8 +90,8 @@ android {
     namespace 'com.anonymous.MicroGpt'
     defaultConfig {
         applicationId 'com.anonymous.MicroGpt'
-        // Hardcoded to 30 (Android 11) — required by llmedge and
-        // @react-native-google-signin/google-signin. The expo-root-project
+        // Hardcoded to 30 (Android 11) — required by the image-gen engines
+        // and @react-native-google-signin/google-signin. The expo-root-project
         // plugin's default of 24 is overridden here directly because setting
         // rootProject.ext.minSdkVersion after the plugin applies is a no-op
         // (the plugin caches its own internal defaults).

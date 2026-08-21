@@ -32,7 +32,7 @@ dependencies {
   implementation 'androidx.core:core-ktx:1.13.1'
   implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
-  // No more llmedge. We ship our own sd-server binary (compiled from
-  // leejet/stable-diffusion.cpp, MIT) as libsd-server.so in jniLibs/.
-  // The Kotlin code communicates with it via HTTP on localhost.
+  // No inference library is linked in. Both engines are standalone ARM64
+  // executables shipped as lib*.so in jniLibs/ and driven over loopback
+  // HTTP — see BinaryResolver.kt for how they are resolved at runtime.
 }

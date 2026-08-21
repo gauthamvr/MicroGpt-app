@@ -594,8 +594,8 @@ function getDownloadDir(): string {
 
 /**
  * Supported model file extensions. Text LLMs use .gguf; image gen
- * models from llmedge use .safetensors (or .gguf if converted via
- * sd.cpp's own tool). We scan for all of these in initializeModels
+ * models use .safetensors or .gguf, and the MNN/QNN packs arrive as
+ * .zip directories. We scan for all of these in initializeModels
  * and rescanDownloadedModels.
  */
 const SUPPORTED_MODEL_EXTS = ['.gguf', '.safetensors', '.ckpt', '.zip'];

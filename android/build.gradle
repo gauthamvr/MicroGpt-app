@@ -24,7 +24,7 @@ apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
 
 // ─── Global minSdk bump ────────────────────────────────────────────────
-// llmedge (Stable Diffusion on-device inference) requires minSdk 30. The
+// The on-device Stable Diffusion engines require minSdk 30. The
 // Expo root project plugin defaults us to 24, so we override it here
 // AFTER the plugin applies — this propagates to app/build.gradle (which
 // reads rootProject.ext.minSdkVersion) and to every module using

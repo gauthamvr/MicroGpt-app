@@ -4,7 +4,7 @@
 // When home.tsx detects the selected model is of type `imageGen`, it
 // renders <ImageGenerationView /> instead of the chat flow. The component
 // owns its own load/generate/unload lifecycle so home.tsx doesn't need to
-// know about llmedge at all — it just hands over the model file path.
+// know which engine runs — it just hands over the model file path.
 //
 // The surface is deliberately similar to the chat input bar (prompt on
 // the bottom, big-send button on the right) so there's no jarring UX

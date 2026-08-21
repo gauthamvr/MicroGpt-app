@@ -36,13 +36,14 @@ On iOS the same JS API is served by **Apple Core ML**
 ([`ml-stable-diffusion`](https://github.com/apple/ml-stable-diffusion)),
 with SD 1.5 / SDXL model bundles downloaded from Hugging Face.
 
-This is all packaged as a reusable Expo module —
-[`modules/expo-stable-diffusion/`](modules/expo-stable-diffusion/) — see its
-[README](modules/expo-stable-diffusion/README.md) for the API, how the engines
-are selected, and how prebuilt executables are shipped and resolved inside an
-Android app. The published RN/Expo Stable Diffusion packages are iOS Core ML
-only; the Android work that does exist has not reached end-to-end
-Snapdragon-accelerated generation.
+This is all packaged as a reusable Expo module, published standalone as
+**[expo-ondevice-diffusion](https://github.com/gauthamvr/expo-ondevice-diffusion)**
+if you want it in your own app. The copy the app builds against lives in
+[`modules/expo-stable-diffusion/`](modules/expo-stable-diffusion/).
+
+The published RN/Expo Stable Diffusion packages are iOS Core ML only, and the
+Android work that does exist has not reached end-to-end Snapdragon-accelerated
+generation — see the standalone repo for the full prior-art comparison.
 
 ### Combo mode — a chat model that sends you pictures
 Load a text model *and* an image model at once. The LLM is prompted to emit

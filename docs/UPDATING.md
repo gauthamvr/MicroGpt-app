@@ -182,7 +182,7 @@ The Dockerfile pins these because the original recipe used them:
 | `-DGGML_OPENMP=OFF` | Android NDK has no OpenMP — must be off |
 | `-DGGML_VULKAN=OFF` | We use OpenCL, not Vulkan |
 | `-DGGML_OPENCL=ON` | The whole point |
-| `-DGGML_OPENCL_TARGET_VERSION=200` | Adreno targets OpenCL 2.0 |
+| `-DGGML_OPENCL_TARGET_VERSION=300` | Matches the OpenCL 3.0+ headers the build installs — older headers lack `cl_mem_properties` and `CL_LARGE_BUFFER_QCOM` |
 | `-DGGML_BACKEND_DL=OFF` | No dynamic backend loading on mobile |
 | `-DBUILD_SHARED_LIBS=OFF` | Static link sd.cpp libs into the executable |
 | `-DSD_BUILD_EXAMPLES=ON` | This is what builds the `sd-server` target |

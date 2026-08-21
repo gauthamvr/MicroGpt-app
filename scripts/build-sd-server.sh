@@ -4,8 +4,13 @@
 # Usage: bash scripts/build-sd-server.sh
 #
 # Requires: Docker daemon running. On Windows, start Docker Desktop first.
-# First run takes ~10-20 min (NDK + OpenCL deps + sd.cpp build). Cached
+# First run takes ~20-30 min (NDK + OpenCL deps + sd.cpp build). Cached
 # layers make subsequent rebuilds much faster.
+#
+# Two recipes exist:
+#   Dockerfile.sd-server.full  self-contained, builds everything
+#   Dockerfile.sd-server       fast path, starts FROM sd-opencl-builder:latest
+# This script picks the fast one when that base image is already present.
 #
 # Verify alignment after with: npm run check-16k
 
@@ -25,8 +30,16 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-echo "==> Building Docker image (first run takes ~10-20 min)"
-docker build -f scripts/Dockerfile.sd-server -t microgpt-sd-server:latest .
+if docker image inspect sd-opencl-builder:latest >/dev/null 2>&1; then
+  DOCKERFILE="scripts/Dockerfile.sd-server"
+  echo "==> Found sd-opencl-builder:latest — using the incremental recipe"
+else
+  DOCKERFILE="scripts/Dockerfile.sd-server.full"
+  echo "==> No sd-opencl-builder:latest locally — using the from-scratch recipe"
+fi
+
+echo "==> Building Docker image from $DOCKERFILE"
+docker build -f "$DOCKERFILE" -t microgpt-sd-server:latest .
 
 echo "==> Extracting compiled binary via docker cp"
 # The binary is baked into the image at /work/output/libsd-server.so.
@@ -43,7 +56,9 @@ if [[ ! -f "$OUT_DIR/libsd-server.so" ]]; then
   exit 1
 fi
 
-echo "==> Replacing $JNI_TARGET"
+echo "==> Installing to $JNI_TARGET"
+# jniLibs/ is gitignored, so it does not exist in a fresh clone.
+mkdir -p "$(dirname "$JNI_TARGET")"
 cp -f "$OUT_DIR/libsd-server.so" "$JNI_TARGET"
 
 echo ""

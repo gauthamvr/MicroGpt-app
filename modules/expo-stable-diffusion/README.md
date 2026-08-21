@@ -4,8 +4,13 @@ On-device Stable Diffusion for React Native / Expo, with **one JS API across
 Android and iOS** and three Android inference backends — Qualcomm NPU, Adreno
 GPU, and CPU.
 
-This is a local Expo module (it lives in `modules/`, it is not on npm). It is
-documented here because the Android half fills a gap.
+This is the copy MicroGPT builds against. It is also published on its own, as
+**[gauthamvr/expo-ondevice-diffusion](https://github.com/gauthamvr/expo-ondevice-diffusion)**
+— use that one if you want the module in your own app; it carries the install
+instructions, the binary-acquisition guide and an architecture write-up.
+
+Not on npm (the `expo-stable-diffusion` name there belongs to an unrelated
+iOS-only project). Documented here because the Android half fills a gap.
 
 ### What else is out there
 
