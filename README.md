@@ -38,9 +38,11 @@ with SD 1.5 / SDXL model bundles downloaded from Hugging Face.
 
 This is all packaged as a reusable Expo module —
 [`modules/expo-stable-diffusion/`](modules/expo-stable-diffusion/) — see its
-[README](modules/expo-stable-diffusion/README.md). As far as we can tell it is
-the only React Native / Expo route to **Android** on-device Stable Diffusion;
-the existing packages in this space are iOS Core ML only.
+[README](modules/expo-stable-diffusion/README.md) for the API, how the engines
+are selected, and how prebuilt executables are shipped and resolved inside an
+Android app. The published RN/Expo Stable Diffusion packages are iOS Core ML
+only; the Android work that does exist has not reached end-to-end
+Snapdragon-accelerated generation.
 
 ### Combo mode — a chat model that sends you pictures
 Load a text model *and* an image model at once. The LLM is prompted to emit

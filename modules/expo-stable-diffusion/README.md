@@ -5,17 +5,35 @@ Android and iOS** and three Android inference backends — Qualcomm NPU, Adreno
 GPU, and CPU.
 
 This is a local Expo module (it lives in `modules/`, it is not on npm). It is
-documented here because the Android half fills a gap: the published RN/Expo
-Stable Diffusion packages are iOS Core ML only.
+documented here because the Android half fills a gap.
+
+### What else is out there
+
+**iOS Core ML, published, mature:**
 
 - [`andrei-zgirvaci/expo-stable-diffusion`](https://github.com/andrei-zgirvaci/expo-stable-diffusion)
-  — iOS Core ML. Its README lists Android as future work. **Unrelated project
-  that happens to share the directory name.**
+  — iOS only; its README lists Android as future work. **Unrelated project that
+  happens to share the directory name** — ours is not a fork of it.
 - [`jeongshin/react-native-ml-stable-diffusion`](https://github.com/jeongshin/react-native-ml-stable-diffusion)
   — also Core ML / Apple Silicon.
 
-Neither runs on Android. If you know of prior art that does, please open an
-issue — we would rather use it than maintain this.
+**Android, partial:**
+
+- [`zraisan/native-onnx`](https://github.com/zraisan/native-onnx) (2026, MIT) —
+  React Native ONNX Runtime bindings with CPU / XNNPACK / NNAPI / **QNN HTP and
+  QNN GPU** backend selection, plus experimental SD 2.1 component helpers. The
+  closest thing to this module on the Qualcomm side. Its README states that
+  end-to-end `generate({ prompt })`, tokenizer and scheduler orchestration are
+  not supported yet.
+- [`venetanji/diffusers-react-native.js`](https://github.com/venetanji/rndfd)
+  (2024) — a fork of `diffusers.js` over `onnxruntime-react-native`. Genuine
+  on-device Android generation, but an unpublished personal fork with no
+  Snapdragon NPU/GPU path.
+
+So the specific thing here that we could not find elsewhere: **one API across
+Android and iOS, with working end-to-end text-to-image on the Qualcomm NPU and
+the Adreno GPU as well as CPU.** If you know of prior art that covers that,
+please open an issue — we would rather use it than maintain this.
 
 ---
 
