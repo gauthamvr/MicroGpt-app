@@ -130,8 +130,7 @@ export const useStore = create<StoreState>()(
        * bad model on the next app launch. We *do* persist lastUsedModelName, so
        * that we know which one was last successfully loaded.
        *
-       * genSettings IS persisted (all fields except forceFullRam, which is
-       * reset via onRehydrateStorage below as a safety override).
+       * genSettings IS persisted.
        */
       partialize: (state) => {
         const {
@@ -163,18 +162,14 @@ export const useStore = create<StoreState>()(
 
       /**
        * Runs after the persisted state is rehydrated from AsyncStorage.
-       * Three jobs:
+       * Two jobs:
        *
        *  1. Merge defaults into genSettings so a user upgrading from an
        *     older app version (whose persisted state doesn't have the
        *     new fields like `characterGreeting`) still ends up with every
        *     field populated instead of `undefined`.
        *
-       *  2. Force `forceFullRam` back to false on every cold start. It's
-       *     a session-only safety override — if the user flipped it on
-       *     last session and it caused an OOM, we don't want them stuck.
-       *
-       *  3. Migrate old `useGpuAcceleration` boolean to the new
+       *  2. Migrate old `useGpuAcceleration` boolean to the new
        *     `hardwareAcceleration` enum. true → 'gpu', false → 'cpu'.
        */
       onRehydrateStorage: () => (state) => {
@@ -205,11 +200,12 @@ export const useStore = create<StoreState>()(
         if (persisted.characterGreeting === 'auto') {
           persisted.characterGreeting = 'scripted';
         }
+        // Dropped setting: the toggle never changed how models load.
+        delete persisted.forceFullRam;
 
         state.genSettings = {
           ...defaultGenSettings,
           ...persisted,
-          forceFullRam: false,
           ...(migratedAccel !== undefined ? { hardwareAcceleration: migratedAccel } : {}),
         };
       },

@@ -1,4 +1,4 @@
-package com.anonymous.MicroGpt
+package com.meteormeta.MicroGpt
 
 import android.app.Application
 import android.content.res.Configuration

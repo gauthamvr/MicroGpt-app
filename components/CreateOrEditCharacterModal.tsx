@@ -22,6 +22,7 @@ import {
   updatePublicCharacter,
   deletePublicCharacter,
 } from '@/lib/supabase-api';
+import { checkCharacterText } from '@/lib/content-safety';
 
 type Props = {
   visible: boolean;
@@ -109,6 +110,15 @@ const CreateOrEditCharacterModal: React.FC<Props> = ({
           conversationStyle: conversationStyle.trim(),
           modelName: resolveModelName(),
         };
+
+        const publicText = [charData.name, charData.subtitle, charData.description, charData.conversationStyle].join('\n');
+        if (!checkCharacterText(publicText).allowed) {
+          themedAlert(
+            'Not shared publicly',
+            "This character contains sexual content, so it can't be shared with the community. It's still saved on your device.",
+          );
+          return;
+        }
 
         if (publicCharacterId) {
           const dbRec = await updatePublicCharacter(publicCharacterId, charData);

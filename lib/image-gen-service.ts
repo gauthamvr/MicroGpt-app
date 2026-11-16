@@ -10,6 +10,13 @@ import * as StableDiffusion from 'expo-stable-diffusion';
 import { npuCoordinator } from './npu-coordinator';
 import { validateModelFile } from './gguf-detect';
 import { getModelsDir, getLegacyModelsDir } from './storage-paths';
+import {
+  checkImagePrompt,
+  ContentBlockedError,
+  IMAGE_OUTPUT_BLOCKED_MESSAGE,
+  IMAGE_PROMPT_BLOCKED_MESSAGE,
+  SAFETY_NEGATIVE_PROMPT,
+} from './content-safety';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -309,6 +316,29 @@ export async function unloadImageModel(): Promise<void> {
 }
 
 /**
+ * Android cancels a generation by killing the engine process, which leaves
+ * the native side with nothing loaded while this service still holds the
+ * model as loaded. Start the engine again for that model. iOS keeps its
+ * pipeline in memory across a cancel, so this is a no-op there.
+ */
+async function restartEngineIfStopped(): Promise<void> {
+  if (StableDiffusion.isLoaded()) return;
+
+  const prev = loadMutex;
+  let release!: () => void;
+  loadMutex = new Promise<void>((r) => { release = r; });
+  await prev;
+
+  try {
+    if (!loadedModelName || StableDiffusion.isLoaded()) return;
+    console.log(`[image-gen-service] engine was stopped — restarting "${loadedModelName}"`);
+    await StableDiffusion.loadModel(await resolveModelPath(loadedModelName));
+  } finally {
+    release();
+  }
+}
+
+/**
  * Generate an image. Returns base64 PNG string.
  * The model must be loaded first via loadImageModel().
  *
@@ -316,8 +346,23 @@ export async function unloadImageModel(): Promise<void> {
  * passed something else — the QNN graph is baked at 512×512 and any
  * other size produces pixelated output. This is a safety net so combo
  * mode (and any future caller) can't accidentally pass the wrong size.
+ *
+ * Every caller (image screen, combo chat, manual image button) goes
+ * through here, so this is where content rules are enforced: the prompt
+ * is checked before anything runs, the safety negative prompt is always
+ * prepended, and the native side withholds any output its NSFW
+ * classifier flags. Blocked requests throw ContentBlockedError.
  */
 export async function generateImage(params: GenerateParams): Promise<string> {
+  if (!loadedModelName) {
+    throw new Error('No image model loaded');
+  }
+  const verdict = checkImagePrompt(params.prompt);
+  if (!verdict.allowed) {
+    console.log(`[image-gen-service] prompt blocked (${verdict.category})`);
+    throw new ContentBlockedError(IMAGE_PROMPT_BLOCKED_MESSAGE, verdict.category);
+  }
+  await restartEngineIfStopped();
   if (!loadedModelName) {
     throw new Error('No image model loaded');
   }
@@ -328,16 +373,27 @@ export async function generateImage(params: GenerateParams): Promise<string> {
   if (fixed && (params.width !== 512 || params.height !== 512)) {
     console.log(`[image-gen-service] fixed-size model: forcing 512x512 (caller asked for ${params.width}x${params.height})`);
   }
-  const base64 = await StableDiffusion.generate({
-    prompt: params.prompt,
-    negativePrompt: params.negativePrompt ?? 'blurry, low quality, distorted, deformed, ugly, bad anatomy',
-    width,
-    height,
-    steps: params.steps ?? 12,
-    cfgScale: params.cfgScale ?? 7.5,
-    seed,
-  });
-  return base64;
+  const userNegative = (
+    params.negativePrompt ?? 'blurry, low quality, distorted, deformed, ugly, bad anatomy'
+  ).trim();
+  try {
+    return await StableDiffusion.generate({
+      prompt: params.prompt,
+      negativePrompt: userNegative
+        ? `${SAFETY_NEGATIVE_PROMPT}, ${userNegative}`
+        : SAFETY_NEGATIVE_PROMPT,
+      width,
+      height,
+      steps: params.steps ?? 12,
+      cfgScale: params.cfgScale ?? 7.5,
+      seed,
+    });
+  } catch (err: any) {
+    if (err?.code === 'ERR_NSFW_BLOCKED') {
+      throw new ContentBlockedError(IMAGE_OUTPUT_BLOCKED_MESSAGE, 'image_output');
+    }
+    throw err;
+  }
 }
 
 export async function cancelGeneration(): Promise<void> {

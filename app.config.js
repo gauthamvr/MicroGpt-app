@@ -46,7 +46,7 @@ export default {
     newArchEnabled: true,
     ios: {
       supportsTablet: true,
-      bundleIdentifier: 'com.anonymous.MicroGpt',
+      bundleIdentifier: 'com.meteormeta.MicroGpt',
       // On-device LLM/image models are multi-GB. Ask the OS for the
       // higher memory ceiling (the llama.rn plugin also sets the
       // matching entitlements on production builds).
@@ -72,7 +72,7 @@ export default {
         foregroundImage: './assets/images/icon.png',
         backgroundColor: '#ffffff',
       },
-      package: 'com.anonymous.MicroGpt',
+      package: 'com.meteormeta.MicroGpt',
     },
     web: {
       bundler: 'metro',

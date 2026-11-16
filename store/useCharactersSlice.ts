@@ -59,6 +59,8 @@ export interface CharactersSlice {
   activeCharacter: Character | null;
   likedPublicCharacters: PublicCharacter[];
   ephemeralPublicCharacter: PublicCharacter | null;
+  /** Community characters this user reported; hidden from the public lists. */
+  hiddenPublicCharacterIds: number[];
 
   addCharacter: (char: Omit<Character, 'id'>) => void;
   updateCharacter: (
@@ -70,6 +72,7 @@ export interface CharactersSlice {
 
   setLikedCharacters: (chars: PublicCharacter[]) => void;
   removeLikedCharacter: (charId: number) => void;
+  hidePublicCharacter: (charId: number) => void;
 
   addOrUpdatePublicCharacterAsLocal: (pubChar: PublicCharacter) => void;
   removeLocalPublicCharacter: (publicId: number) => void;
@@ -83,6 +86,7 @@ const createCharactersSlice = (set: any, get: any): CharactersSlice => ({
   activeCharacter: null,
   likedPublicCharacters: [],
   ephemeralPublicCharacter: null,
+  hiddenPublicCharacterIds: [],
 
   addCharacter: (char) => {
     const newChar: Character = {
@@ -163,6 +167,14 @@ const createCharactersSlice = (set: any, get: any): CharactersSlice => ({
         (c: PublicCharacter) => c.id !== charId
       ),
     }));
+  },
+
+  hidePublicCharacter: (charId) => {
+    set((state: any) =>
+      state.hiddenPublicCharacterIds.includes(charId)
+        ? {}
+        : { hiddenPublicCharacterIds: [...state.hiddenPublicCharacterIds, charId] }
+    );
   },
 
   addOrUpdatePublicCharacterAsLocal: (pubChar) => {

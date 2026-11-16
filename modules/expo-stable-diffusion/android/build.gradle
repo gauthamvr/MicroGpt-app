@@ -32,7 +32,12 @@ dependencies {
   implementation 'androidx.core:core-ktx:1.13.1'
   implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
-  // No inference library is linked in. Both engines are standalone ARM64
+  // Neither diffusion engine is linked in: both are standalone ARM64
   // executables shipped as lib*.so in jniLibs/ and driven over loopback
   // HTTP — see BinaryResolver.kt for how they are resolved at runtime.
+  //
+  // LiteRT runs only the NSFW output classifier (NsfwFilter.kt). 1.4.x is
+  // the last line with the classic Interpreter API, and its .so files are
+  // 16-KB page aligned.
+  implementation 'com.google.ai.edge.litert:litert:1.4.2'
 }

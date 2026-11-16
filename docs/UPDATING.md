@@ -52,8 +52,9 @@ npm install --ignore-scripts && npm run setup-native
 Plain `npm install` will fail at llama.rn's postinstall because npm
 runs the package's own postinstall BEFORE our project-level
 patch-package can fix it. The `--ignore-scripts` step skips both,
-then `setup-native` (=`patch-package && node node_modules/llama.rn/install/download-native-artifacts.js`)
-applies the patch and runs the now-fixed download.
+then `setup-native` (=`patch-package && node node_modules/llama.rn/install/download-native-artifacts.js && node scripts/gen-llama-archs.js`)
+applies the patch, runs the now-fixed download and regenerates the
+architecture list (see below).
 
 **Important: do not use `--legacy-peer-deps`.** That produces a
 lockfile EAS rejects with `npm ci`-must-be-in-sync errors (eslint
@@ -78,15 +79,61 @@ doesn't match. Procedure:
 2. Run `npx patch-package llama.rn` — but it'll create an 800-KB
    patch full of binary noise from comparing against an unbuilt
    fresh install. Instead: write the patch by hand. See the existing
-   `patches/llama.rn+0.12.0-rc.9.patch` for the template — it's
+   `patches/llama.rn+0.12.9.patch` for the template — it's
    ~15 lines.
 3. Rename it to `patches/llama.rn+<new-version>.patch`.
 4. Verify: `npx patch-package` should print `llama.rn@<new-version> ✔`.
 5. Run `npm run setup-native` to confirm the artifact download works.
 
+### Files a bump changes besides package.json
+
+- **`lib/llama-archs.generated.ts`** — the `general.architecture` values
+  the bundled llama.cpp can load, written by `scripts/gen-llama-archs.js`
+  from llama.rn's `llama-arch.cpp` (runs in `postinstall` and
+  `setup-native`). The app reads a GGUF's architecture before loading and
+  shows "Model Not Supported Yet" for one that isn't on the list, so a
+  stale list refuses models the engine could run. `__tests__/gguf-detect.test.ts`
+  fails when the file's version differs from the installed llama.rn.
+  Commit the regenerated file with the bump.
+- **`android/app/src/main/assets/ggml-hexagon/libggml-htp-*.so`** — tracked,
+  but rewritten on every Android build by llama.rn's `syncRNLlamaHtpAssets`
+  Gradle task from `node_modules/llama.rn/bin/arm64-v8a/`. After a bump the
+  first build changes them (0.12.9 dropped `v69`). Commit them with the bump.
+
+### What a newer engine unlocks (checked November 2026)
+
+- 0.12.9 is the newest stable release and knows 138 architectures.
+  0.13.0-rc.11 (release candidates only at the time) adds 36 more,
+  among them `lfm3`, `qwen4exp`, `deepseek41`, `kimi-k3`, `glm5-next`,
+  `mistral-large4`, `spark2_5` and `minimax-01`. Models built on those are
+  refused with the "Model Not Supported Yet" message until the engine is
+  bumped; nothing else has to change, the list is regenerated.
+- 0.12.7+ keeps the KV cache across turns for hybrid models (Qwen3.5) and
+  for multimodal models.
+
+### MTP speculative decoding
+
+GGUFs with multi-token-prediction layers (`<arch>.nextn_predict_layers`,
+e.g. `unsloth/Qwen3.5-*-MTP-GGUF`) can draft tokens with their own
+prediction head. `home.tsx` supports it (`MTP_SPECULATIVE`), behind the
+"Speculative decoding (MTP)" switch in Generation Settings, **off by
+default**. Measured on the x86_64 emulator (CPU) with Qwen3.5-0.8B-MTP
+Q4_K_M on llama.rn 0.12.9, same prompts:
+
+| | MTP off | MTP on |
+|---|---|---|
+| Generation | 19–20 tok/s | 3 tok/s (21–25 % of drafts accepted) |
+| Wait before the first token, turns 2 and 3 | 0.9 s, 3.0 s | 11.4 s, 22.3 s |
+
+With MTP on the prompt was reprocessed on every turn instead of reusing
+the KV cache. It has not been measured on a phone GPU or NPU. Re-measure
+on a real device before changing the default or adding MTP builds to the
+catalog. Gemma 4's MTP head is a separate file and is not wired at all.
+
 ### Verify
 
 - `npx tsc --noEmit -p tsconfig.json` exits 0.
+- `npx jest --watchAll=false` passes.
 - `node -e "console.log(require('./node_modules/llama.rn/package.json').version)"` matches package.json.
 - `ls node_modules/llama.rn/android/src/main/jniLibs/arm64-v8a/` shows
   `librnllama.so` plus the v8 / dotprod / hexagon variants.
@@ -324,11 +371,15 @@ This audits every shipped library for Android 16-KB-page compatibility
 non-zero if anything's misaligned.
 
 Currently expected:
-- All llama.rn JNI libs (rc.9): aligned.
+- All llama.rn JNI libs (0.12.9): aligned.
 - local-dream `libstable_diffusion_core.so` (v2.4.3): aligned.
 - `libsd-server.so` (rebuilt via §3): aligned (the `-Wl,-z,max-page-size=16384`
   flag in the Dockerfile is what makes this work for NDK r27).
 - QNN system libs: aligned. QNN HtpV*.so + Skel: 32-bit DSP, N/A.
+
+The APK ships `arm64-v8a` and `x86_64` only (`reactNativeArchitectures` in
+`android/gradle.properties`). llama.rn has no 32-bit library, so a 32-bit
+build could be installed but could not load a model.
 
 ---
 
@@ -370,10 +421,12 @@ does this automatically.
 
 | Concern | Files |
 |---|---|
-| Text inference (llama.rn) | `node_modules/llama.rn/android/src/main/jniLibs/arm64-v8a/*.so` (managed by npm + patch-package) |
+| Text inference (llama.rn) | `node_modules/llama.rn/android/src/main/jniLibs/arm64-v8a/*.so` (managed by npm + patch-package), `android/app/src/main/assets/ggml-hexagon/*.so` (copied by llama.rn's Gradle task) |
+| Engine architecture list | `scripts/gen-llama-archs.js` → `lib/llama-archs.generated.ts` |
 | Image inference NPU/GPU | `modules/expo-stable-diffusion/android/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so` |
 | Image inference CPU | `modules/expo-stable-diffusion/android/src/main/jniLibs/arm64-v8a/libsd-server.so` |
 | Hexagon DSP runtime | `modules/expo-stable-diffusion/android/src/main/assets/qnnlibs/*.so` |
 | Patches | `patches/*.patch` |
 | Build infra | `scripts/Dockerfile.sd-server`, `scripts/build-sd-server.sh`, `scripts/check-16k-alignment.js` |
 | npm orchestration | `package.json` scripts: `install:windows`, `setup-native`, `check-16k`, `build:sd-server` |
+| Tests | `__tests__/*.test.ts` — `npx jest --watchAll=false` (`npm test` runs in watch mode) |

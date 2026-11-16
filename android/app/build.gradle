@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.anonymous.MicroGpt'
+    namespace 'com.meteormeta.MicroGpt'
     defaultConfig {
-        applicationId 'com.anonymous.MicroGpt'
+        applicationId 'com.meteormeta.MicroGpt'
         // Hardcoded to 30 (Android 11) — required by the image-gen engines
         // and @react-native-google-signin/google-signin. The expo-root-project
         // plugin's default of 24 is overridden here directly because setting

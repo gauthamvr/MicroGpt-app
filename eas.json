@@ -44,6 +44,14 @@
       "ios": {}
     }
   },
+  "submit": {
+    "production": {
+      "android": {
+        "track": "alpha",
+        "releaseStatus": "draft"
+      }
+    }
+  },
   "cli": {
     "appVersionSource": "remote"
   }

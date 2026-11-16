@@ -36,27 +36,16 @@ type CoreMLRepo = {
   variant: CoreMLVariant;
 };
 
+// Only SD 2.1-base ships on iOS: its training set was NSFW-filtered, and
+// iOS doesn't run the output classifier yet (see docs/CONTENT-SAFETY.md).
+// SD 1.5 readily produces nudity, so it stays off until NsfwFilter is ported.
 const COREML_REPOS: CoreMLRepo[] = [
-  {
-    name: 'SD-1.5-CoreML',
-    repo: 'apple/coreml-stable-diffusion-v1-5',
-    description: 'Stable Diffusion 1.5 · 512×512 · Neural Engine (iPhone 12+)',
-    size: '2.6 GB',
-    variant: 'split_einsum',
-  },
   {
     name: 'SD-2.1-base-CoreML',
     repo: 'apple/coreml-stable-diffusion-2-1-base',
     description: 'Stable Diffusion 2.1 · 512×512 · Neural Engine (iPhone 12+)',
     size: '2.6 GB',
     variant: 'split_einsum',
-  },
-  {
-    name: 'SD-1.5-CoreML-CPU',
-    repo: 'apple/coreml-stable-diffusion-v1-5',
-    description: 'Stable Diffusion 1.5 · 512×512 · CPU/GPU (older devices, e.g. iPhone 11)',
-    size: '2.6 GB',
-    variant: 'original',
   },
   {
     name: 'SD-2.1-base-CoreML-CPU',

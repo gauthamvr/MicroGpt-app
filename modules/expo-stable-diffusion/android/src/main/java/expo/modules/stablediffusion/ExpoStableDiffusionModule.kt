@@ -61,6 +61,7 @@ class ExpoStableDiffusionModule : Module() {
   private var sdServer: SdServerProcess? = null
   private var localDream: LocalDreamProcess? = null
   private var activeEngine: String? = null // "sdcpp" or "localdream"
+  private var nsfwFilter: NsfwFilter? = null
 
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -303,6 +304,29 @@ class ExpoStableDiffusionModule : Module() {
             }
           }
 
+          // Fail closed: if the classifier can't run, the image is withheld
+          // rather than returned unchecked.
+          val verdict = try {
+            val filter = nsfwFilter ?: NsfwFilter(context).also { nsfwFilter = it }
+            filter.check(base64)
+          } catch (t: Throwable) {
+            Log.e(TAG, "Safety check failed", t)
+            promise.reject(
+              "ERR_SAFETY_CHECK_FAILED",
+              "The safety check could not run, so the image was withheld: ${t.message ?: t.javaClass.simpleName}",
+              t,
+            )
+            return@launch
+          }
+          if (verdict.blocked) {
+            promise.reject(
+              "ERR_NSFW_BLOCKED",
+              "The generated image was withheld by the safety filter.",
+              null,
+            )
+            return@launch
+          }
+
           try {
             sendEvent("onGenerationProgress", mapOf("step" to steps, "totalSteps" to steps))
           } catch (_: Throwable) {}
@@ -336,6 +360,7 @@ class ExpoStableDiffusionModule : Module() {
 
     OnDestroy {
       try { stopAll() } catch (_: Throwable) {}
+      try { nsfwFilter?.close() } catch (_: Throwable) {}
     }
   }
 

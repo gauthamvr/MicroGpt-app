@@ -21,6 +21,7 @@ import {
   incrementDownload,
 } from '@/lib/supabase-api';
 import ChubBrowserModal from '@/components/ChubBrowserModal';
+import { promptReport } from '@/lib/content-report';
 
 const Characters = () => {
   const colorScheme = useColorScheme();
@@ -48,6 +49,8 @@ const Characters = () => {
   const addOrUpdatePublicCharacterAsLocal = useStore((s) => s.addOrUpdatePublicCharacterAsLocal);
   const removeLocalPublicCharacter = useStore((s) => s.removeLocalPublicCharacter);
   const removeLikedCharacter = useStore((s) => s.removeLikedCharacter);
+  const hiddenPublicCharacterIds = useStore((s) => s.hiddenPublicCharacterIds);
+  const hidePublicCharacter = useStore((s) => s.hidePublicCharacter);
 
   const [sortBy, setSortBy] = useState<'likes' | 'downloads'>('likes');
   const [publicChars, setPublicChars] = useState<any[]>([]);
@@ -211,9 +214,33 @@ const Characters = () => {
           </Text>
 
           <TouchableOpacity
+            onPress={() =>
+              promptReport(
+                {
+                  contentType: 'character',
+                  characterId: item.id,
+                  modelName: item.model_name,
+                  contentExcerpt: `#${item.id} ${item.name}\n${item.subtitle ?? ''}\n${item.description ?? ''}`,
+                },
+                () => hidePublicCharacter(item.id),
+              )
+            }
+            accessibilityLabel="Report character"
+            style={{
+              marginLeft: 'auto',
+              padding: 6,
+            }}
+          >
+            <Ionicons
+              name="flag-outline"
+              size={18}
+              color={colorScheme === 'dark' ? '#9BA1A6' : '#666'}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
             onPress={() => handleToggleLike(item.id)}
             style={{
-              marginLeft: 8,
+              marginLeft: 4,
               padding: 6,
             }}
           >
@@ -383,7 +410,7 @@ const Characters = () => {
 
       {/* List */}
       <FlatList
-        data={publicChars}
+        data={publicChars.filter((c) => !hiddenPublicCharacterIds.includes(c.id))}
         renderItem={renderItem}
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={{

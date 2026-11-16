@@ -293,6 +293,7 @@ class ExpoDownloadManagerModule : Module() {
         val maxRetries = 3
         val partFile = File("${t.destPath}.part")
         val finalFile = File(t.destPath)
+        var restartFromZero = false
 
         try {
             // If the final file already exists and is non-empty, don't
@@ -319,6 +320,27 @@ class ExpoDownloadManagerModule : Module() {
             }
 
             client.newCall(requestBuilder.build()).execute().use { response ->
+                // 416 on a resume means the Range start is at or past the
+                // end of the remote file: either the .part already holds
+                // every byte (the process died between the last write and
+                // the rename) or it is stale. HuggingFace's CDN sends no
+                // Content-Range with a 416, so the size is probed separately.
+                // If the probe can't tell, the partial is left alone: it may
+                // be a finished multi-GB download.
+                if (response.code == 416 && resumeFrom > 0) {
+                    val remoteTotal = probeRemoteSize(t.url)
+                        ?: throw Exception("HTTP 416, and the size of the remote file could not be read")
+                    if (remoteTotal == resumeFrom) {
+                        Log.d(TAG, "[${t.modelName}] partial is already complete ($resumeFrom bytes)")
+                        t.bytesTotal.set(remoteTotal)
+                        finalizeDownload(t, partFile, finalFile, remoteTotal)
+                    } else {
+                        Log.w(TAG, "[${t.modelName}] partial ($resumeFrom bytes) doesn't match remote size ($remoteTotal) — starting from 0")
+                        try { partFile.delete() } catch (_: Throwable) {}
+                        restartFromZero = true
+                    }
+                    return@use
+                }
                 if (!response.isSuccessful) {
                     throw Exception("HTTP ${response.code} ${response.message}")
                 }
@@ -426,34 +448,10 @@ class ExpoDownloadManagerModule : Module() {
                     )
                 }
 
-                // Rename .part → final atomically. If the rename fails
-                // (different filesystem, etc.) fall back to copy+delete.
-                if (finalFile.exists()) {
-                    try { finalFile.delete() } catch (_: Throwable) {}
-                }
-                val renamed = try { partFile.renameTo(finalFile) } catch (_: Throwable) { false }
-                if (!renamed) {
-                    partFile.copyTo(finalFile, overwrite = true)
-                    try { partFile.delete() } catch (_: Throwable) {}
-                }
-
-                // Double-check the final file is actually the expected
-                // size. If the rename somehow produced a corrupt result,
-                // delete it and error out so the UI never shows a broken
-                // "Use Model" button for a truncated file.
-                val actualFinalSize = finalFile.length()
-                if (totalBytes > 0 && actualFinalSize < totalBytes) {
-                    try { finalFile.delete() } catch (_: Throwable) {}
-                    throw Exception(
-                        "Post-rename size mismatch: expected ${formatBytes(totalBytes)}, " +
-                            "got ${formatBytes(actualFinalSize)}"
-                    )
-                }
-
-                t.bytesDownloaded.set(finalSize)
-                emitProgressThrottled(t, finalSize, finalSize, force = true)
-                emitComplete(t, finalSize)
-                untrack(t.downloadId)
+                finalizeDownload(t, partFile, finalFile, totalBytes)
+            }
+            if (restartFromZero) {
+                runDownload(t, attempt)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Cancellation is expected (user tapped cancel) — no error emit
@@ -487,6 +485,68 @@ class ExpoDownloadManagerModule : Module() {
                 emitError(t, msg)
                 untrack(t.downloadId)
             }
+        }
+    }
+
+    /**
+     * Promote a fully-written .part file to its final name and report
+     * completion to JS.
+     */
+    private fun finalizeDownload(t: Tracked, partFile: File, finalFile: File, totalBytes: Long) {
+        val finalSize = partFile.length()
+
+        // Rename .part → final atomically. If the rename fails
+        // (different filesystem, etc.) fall back to copy+delete.
+        if (finalFile.exists()) {
+            try { finalFile.delete() } catch (_: Throwable) {}
+        }
+        val renamed = try { partFile.renameTo(finalFile) } catch (_: Throwable) { false }
+        if (!renamed) {
+            partFile.copyTo(finalFile, overwrite = true)
+            try { partFile.delete() } catch (_: Throwable) {}
+        }
+
+        // Double-check the final file is actually the expected
+        // size. If the rename somehow produced a corrupt result,
+        // delete it and error out so the UI never shows a broken
+        // "Use Model" button for a truncated file.
+        val actualFinalSize = finalFile.length()
+        if (totalBytes > 0 && actualFinalSize < totalBytes) {
+            try { finalFile.delete() } catch (_: Throwable) {}
+            throw Exception(
+                "Post-rename size mismatch: expected ${formatBytes(totalBytes)}, " +
+                    "got ${formatBytes(actualFinalSize)}"
+            )
+        }
+
+        t.bytesDownloaded.set(finalSize)
+        emitProgressThrottled(t, finalSize, finalSize, force = true)
+        emitComplete(t, finalSize)
+        untrack(t.downloadId)
+    }
+
+    /**
+     * Size of the remote file, read from the Content-Range of a one-byte
+     * ranged GET. Returns null when the server doesn't report it.
+     */
+    private fun probeRemoteSize(url: String): Long? {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "MicroGPT/1.0")
+            .header("Accept-Encoding", "identity")
+            .header("Range", "bytes=0-0")
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                when (response.code) {
+                    206 -> response.header("Content-Range")
+                        ?.substringAfterLast('/', "")?.toLongOrNull()
+                    200 -> response.body?.contentLength()?.takeIf { it > 0 }
+                    else -> null
+                }
+            }
+        } catch (_: Throwable) {
+            null
         }
     }
 

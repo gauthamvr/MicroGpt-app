@@ -4,7 +4,7 @@
 the device.** No API keys, no inference server, no data leaving the handset.
 Download a model once and everything after that works in airplane mode.
 
-[![Get it on Google Play](https://img.shields.io/badge/Google%20Play-Download-414141?logo=google-play&logoColor=white)](https://play.google.com/store/apps/details?id=com.anonymous.MicroGpt)
+[![Get it on Google Play](https://img.shields.io/badge/Google%20Play-Download-414141?logo=google-play&logoColor=white)](https://play.google.com/store/apps/details?id=com.meteormeta.MicroGpt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Built with Expo / React Native. Android is the mature platform; iOS is
@@ -176,12 +176,12 @@ In [Google Cloud Console](https://console.cloud.google.com) → *APIs & Services
 - **Web application** → this is `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, and it is
   also what the Supabase Google provider needs. Android authenticates against
   the *web* client, not an Android one.
-- **Android** → package `com.anonymous.MicroGpt` plus the SHA-1 of your
+- **Android** → package `com.meteormeta.MicroGpt` plus the SHA-1 of your
   signing certificate. Needed for sign-in to succeed on device, even though
   its client ID is never referenced in code. Get the debug SHA-1 with
   `cd android && ./gradlew signingReport`, and the release one from
   `eas credentials`.
-- **iOS** → bundle id `com.anonymous.MicroGpt`. Gives you the two iOS values
+- **iOS** → bundle id `com.meteormeta.MicroGpt`. Gives you the two iOS values
   in `.env`.
 
 Sign-in is only needed to publish characters and keep a profile. Chat and

@@ -21,6 +21,7 @@ import {
   toggleCharacterLike,
   incrementDownload,
 } from '@/lib/supabase-api';
+import { promptReport } from '@/lib/content-report';
 
 type StorePublicCharacter = {
   id: number;
@@ -59,6 +60,8 @@ export default function ProfileDetailPage() {
   const removeLikedCharacter = useStore((s) => s.removeLikedCharacter);
   const setEphemeralPublicCharacter = useStore((s) => s.setEphemeralPublicCharacter);
   const setActiveFromEphemeralPublicChar = useStore((s) => s.setActiveFromEphemeralPublicChar);
+  const hiddenPublicCharacterIds = useStore((s) => s.hiddenPublicCharacterIds);
+  const hidePublicCharacter = useStore((s) => s.hidePublicCharacter);
 
   const headingColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const cardBgColor = colorScheme === 'dark' ? '#242424' : '#f5f5f5';
@@ -219,6 +222,10 @@ export default function ProfileDetailPage() {
     );
   }
 
+  const visibleCharacters = (profile.characters ?? []).filter(
+    (c) => !hiddenPublicCharacterIds.includes(c.id)
+  );
+
   const renderCharItem = ({ item }: { item: StorePublicCharacter }) => {
     const liked = isCharLiked(item.id);
     return (
@@ -244,6 +251,27 @@ export default function ProfileDetailPage() {
             {item.name}
           </Text>
 
+          <TouchableOpacity
+            onPress={() =>
+              promptReport(
+                {
+                  contentType: 'character',
+                  characterId: item.id,
+                  modelName: item.model_name,
+                  contentExcerpt: `#${item.id} ${item.name}\n${item.subtitle ?? ''}\n${item.description ?? ''}`,
+                },
+                () => hidePublicCharacter(item.id),
+              )
+            }
+            accessibilityLabel="Report character"
+            style={{ marginLeft: 'auto' }}
+          >
+            <Ionicons
+              name="flag-outline"
+              size={18}
+              color={colorScheme === 'dark' ? '#9BA1A6' : '#666'}
+            />
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => handleToggleLikeCharacter(item)}
             style={{ marginLeft: 10 }}
@@ -385,9 +413,9 @@ export default function ProfileDetailPage() {
         Public Characters
       </Text>
 
-      {profile.characters && profile.characters.length > 0 ? (
+      {visibleCharacters.length > 0 ? (
         <FlatList
-          data={profile.characters}
+          data={visibleCharacters}
           renderItem={renderCharItem}
           keyExtractor={(item) => item.id.toString()}
         />

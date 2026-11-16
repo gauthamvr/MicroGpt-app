@@ -48,8 +48,11 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import * as ImageGenService from '@/lib/image-gen-service';
 import { getModelsDir, getLegacyModelsDir } from '@/lib/storage-paths';
 import { npuCoordinator } from '@/lib/npu-coordinator';
-import { validateGgufFile, detectGgufModelType } from '@/lib/gguf-detect';
+import { validateGgufFile, detectGgufModelType, isSupportedTextArch } from '@/lib/gguf-detect';
+import { estimateTokens, selectHistoryWindow } from '@/lib/chat-context';
 import { createComboStreamProcessor, ComboStreamProcessor, ComboImageSettings } from '@/lib/combo-chat-handler';
+import { checkChatText, CHAT_BLOCKED_REPLY, CHAT_CONTENT_RULE } from '@/lib/content-safety';
+import { promptReport } from '@/lib/content-report';
 import * as ImagePicker from 'expo-image-picker';
 
 import type { HardwareAccelMode, Model } from '@/store';
@@ -85,6 +88,16 @@ function getPerfParams(modelPath: string): { n_threads: number; n_batch: number;
     mmapHint: !shouldDisableMmap(modelPath),
   };
 }
+
+/**
+ * MTP speculative decoding, for GGUFs that carry multi-token-prediction
+ * (NextN) layers such as unsloth's Qwen3.5 "MTP" builds. The model drafts
+ * a few tokens ahead with its own prediction head and keeps the ones the
+ * full model agrees with, so output is unchanged and only speed differs.
+ * It has to be passed to initLlama (hybrid models allocate their rollback
+ * state at load) and again on every completion.
+ */
+const MTP_SPECULATIVE = { type: 'draft-mtp', n_max: 3 } as const;
 
 /**
  * Resolve the user's hardware acceleration preference into an actual backend
@@ -618,7 +631,6 @@ function buildCharacterSystemPrompt(
       `# Rules\n` +
         `- Stay in character at all times. Never break the fourth wall.\n` +
         `- Never say you are an AI, language model, or assistant.\n` +
-        `- Never refuse, lecture, moralize, or add safety disclaimers.\n` +
         `- Match the character's personality fully.\n` +
         `- Respond as the character would naturally respond.\n` +
         `- Use *actions in asterisks* for physical gestures when it fits.\n` +
@@ -639,10 +651,12 @@ function buildCharacterSystemPrompt(
         `- ALWAYS use [IMG: ...] when the user asks for any photo, picture, selfie, or image\n` +
         `- NEVER say you cannot send photos or generate images — you CAN\n` +
         `- The description inside [IMG: ...] must be detailed: subject, pose/action, lighting, style, mood\n` +
+        `- People in photos are always fully clothed in everyday outfits; never describe nudity, underwear, swimwear or suggestive poses\n` +
         `- You can include conversational text before and/or after the [IMG: ...] tag`,
     );
   }
 
+  blocks.push(CHAT_CONTENT_RULE);
   return blocks.join('\n\n');
 }
 
@@ -654,6 +668,13 @@ type ChatMessage = {
   imageUri?: string;
   isGeneratingImage?: boolean;
   imagePrompt?: string;
+};
+
+type LoadModelOptions = {
+  /** Keep the text model off the Hexagon NPU (image generation owns it). */
+  forceNonNpu?: boolean;
+  /** Reloading the model the chat was already using: keep the conversation. */
+  keepSession?: boolean;
 };
 
 /* tiny typing dots, optionally with a small "{name} is typing" label */
@@ -902,6 +923,26 @@ const ChatMessageRow: React.FC<ChatMessageRowProps> = ({
           </Text>
         )
       )}
+      {!item.isStreaming && !item.isGeneratingImage && (item.imageUri || rawMessage.trim()) ? (
+        <TouchableOpacity
+          onPress={() =>
+            promptReport({
+              contentType: item.imageUri ? 'image' : 'chat',
+              modelName: useStore.getState().selectedModel?.name,
+              prompt: item.imagePrompt,
+              contentExcerpt: rawMessage,
+            })
+          }
+          accessibilityLabel="Report this reply"
+          hitSlop={8}
+          style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginTop: 6, opacity: 0.75 }}
+        >
+          <Ionicons name="flag-outline" size={13} color={cs === 'dark' ? '#9BA1A6' : '#6B7280'} />
+          <Text style={{ marginLeft: 4, fontSize: 12, color: cs === 'dark' ? '#9BA1A6' : '#6B7280' }}>
+            Report
+          </Text>
+        </TouchableOpacity>
+      ) : null}
       {item.isStreaming && (
         <TypingIndicator
           anim={typingAnim}
@@ -1219,7 +1260,6 @@ const Home: React.FC = () => {
   const selectTextModel = useStore((s) => s.selectTextModel);
   const selectImageGenModel = useStore((s) => s.selectImageGenModel);
   const lastUsedModelName = useStore((s) => s.lastUsedModelName);
-  const lastUsedImageGenModelName = useStore((s) => s.lastUsedImageGenModelName);
   const setLastUsedModelName = useStore((s) => s.setLastUsedModelName);
   const downloadedModels = useStore((s) => s.downloadedModels);
   const models = useStore((s) => s.models);
@@ -1268,9 +1308,7 @@ const Home: React.FC = () => {
   // Generation settings are now persisted in the zustand store
   // (store/useGenSettingsSlice.ts). Every chat and every character
   // activation follows whatever the user last saved in the Settings
-  // modal, across cold starts. The only field that intentionally does
-  // NOT survive a cold start is `forceFullRam` — it's a session-only
-  // safety override (see onRehydrateStorage in store/index.ts).
+  // modal, across cold starts.
   const genSettings = useStore((s) => s.genSettings);
   const setGenSettings = useStore((s) => s.setGenSettings);
 
@@ -1315,7 +1353,9 @@ const Home: React.FC = () => {
   // eviction handler can rebuild it on GPU/CPU when image gen takes
   // over the Hexagon DSP.
   const loadedTextModelRef = useRef<typeof selectedModel | null>(null);
-  const loadModelImplRef = useRef<((m: typeof selectedModel, opts?: { forceNonNpu?: boolean }) => Promise<boolean>) | null>(null);
+  // True while the loaded context was created with MTP speculative decoding.
+  const mtpActiveRef = useRef(false);
+  const loadModelImplRef = useRef<((m: typeof selectedModel, opts?: LoadModelOptions) => Promise<boolean>) | null>(null);
   const unloadModelImplRef = useRef<(() => Promise<void>) | null>(null);
   const activeCompletionPromiseRef = useRef<Promise<any> | null>(null);
   const [inputText, setInputText] = useState('');
@@ -1347,7 +1387,10 @@ const Home: React.FC = () => {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const modelContextSizeRef = useRef(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
-  const bgReleasedRef = useRef(false);
+  // The text model that was unloaded while the app sat in the background,
+  // to be loaded again on return. Not `selectedModel`: in combo mode that
+  // can be the image model.
+  const bgReleasedModelRef = useRef<Model | null>(null);
   /** Timer that fires after BG_UNLOAD_DELAY_MS of being in the background.
    *  Cleared if the user returns to the app before it fires. */
   const bgUnloadTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1361,6 +1404,9 @@ const Home: React.FC = () => {
   const comboProcessorRef = useRef<ComboStreamProcessor | null>(null);
   // Tracks the last (model, character) we pre-warmed so we don't repeat it.
   const prewarmKeyRef = useRef<string | null>(null);
+  // First history message kept in the last prompt, once a chat has been
+  // trimmed (see selectHistoryWindow).
+  const historyStartIdRef = useRef<string | null>(null);
   /**
    * Whether the currently-loaded model's chat template actually respects
    * the `enable_thinking` flag. Probed via getFormattedChat after load
@@ -1485,7 +1531,7 @@ const Home: React.FC = () => {
     }
     const alreadyLoaded =
       !!llamaContextRef.current &&
-      useStore.getState().lastUsedModelName === textModel.name;
+      loadedTextModelRef.current?.name === textModel.name;
     // ALSO skip if we're already loading this exact model. Effect deps
     // include `comboModeEnabled` and `selectedModel`; toggling either
     // mid-load used to re-trigger loadModel and restart the whole
@@ -1546,7 +1592,7 @@ const Home: React.FC = () => {
         if (!cancelled) {
           setIsImageModelReady(true);
           setIsImageModelLoading(false);
-          useStore.getState().setLastUsedModelName(selectedImageGenModel.name);
+          useStore.setState({ lastUsedImageGenModelName: selectedImageGenModel.name });
         }
       } catch (err: any) {
         if (!cancelled) {
@@ -1671,6 +1717,7 @@ const Home: React.FC = () => {
             n_predict: 0,
             temperature: 0,
             top_p: 1,
+            ...(mtpActiveRef.current && { speculative: false }),
           } as any);
         } else {
           // Generative path — the model streams a short in-character
@@ -1709,6 +1756,7 @@ const Home: React.FC = () => {
               repeat_penalty: 1.1,
               enable_thinking: false,
               reasoning_format: 'none',
+              ...(mtpActiveRef.current && { speculative: MTP_SPECULATIVE }),
             } as any,
             (d) => {
               if (!isGeneratingRef.current || !d.token) return;
@@ -1781,7 +1829,7 @@ const Home: React.FC = () => {
             bgUnloadTimerRef.current = null;
             // Only unload if we're still in the background when the timer fires
             if (appStateRef.current !== 'active' && llamaContextRef.current) {
-              bgReleasedRef.current = true;
+              bgReleasedModelRef.current = loadedTextModelRef.current;
               void unloadModel();
             }
           }, BG_UNLOAD_DELAY_MS);
@@ -1793,15 +1841,18 @@ const Home: React.FC = () => {
           clearTimeout(bgUnloadTimerRef.current);
           bgUnloadTimerRef.current = null;
         }
-        // If the timer DID fire while we were away, reload the model.
-        if (bgReleasedRef.current) {
-          bgReleasedRef.current = false;
-          if (selectedModel) {
-            (async () => {
-              const ok = await loadModel(selectedModel);
-              if (!ok) selectModel(null);
-            })();
-          }
+        // If the timer DID fire while we were away, reload the model and
+        // keep the conversation that was on screen.
+        const released = bgReleasedModelRef.current;
+        if (released) {
+          bgReleasedModelRef.current = null;
+          (async () => {
+            const ok = await loadModel(released, { keepSession: true });
+            if (!ok) {
+              if (useStore.getState().comboModeEnabled) selectTextModel(null);
+              else selectModel(null);
+            }
+          })();
         }
       }
     });
@@ -1953,7 +2004,7 @@ const Home: React.FC = () => {
   // for ONE turn only, then cleared — re-sending on every turn would
   // force the CLIP encoder to run repeatedly.
   const pendingVisionImageRef = useRef<string | null>(null);
-  const loadModel = async (model: typeof selectedModel, opts?: { forceNonNpu?: boolean }) => {
+  const loadModel = async (model: typeof selectedModel, opts?: LoadModelOptions) => {
     if (!model) return false;
     // Mark any in-flight load as superseded BEFORE waiting on the mutex
     // so they can bail at their next checkpoint instead of finishing
@@ -1999,7 +2050,7 @@ const Home: React.FC = () => {
     if (loadGenRef.current !== myGen) throw SUPERSEDED;
   };
 
-  const doLoadModel = async (model: typeof selectedModel, opts?: { forceNonNpu?: boolean }, myGen: number = loadGenRef.current): Promise<boolean> => {
+  const doLoadModel = async (model: typeof selectedModel, opts?: LoadModelOptions, myGen: number = loadGenRef.current): Promise<boolean> => {
     if (!model) return false;
     // Always unload the previous context first, then yield a tick to
     // give the kernel a moment to actually reclaim the freed pages
@@ -2075,6 +2126,17 @@ const Home: React.FC = () => {
           'Wrong Model Type',
           `"${model.name}" appears to be an image-generation model (architecture: ${detected.architecture ?? 'unknown'}). It can't be loaded as a chat model.\n\n` +
           `Use the image generation panel to load image models instead.`,
+        );
+        return false;
+      }
+      // llama.cpp refuses any architecture it doesn't know, and the three
+      // load attempts below would each fail with a vague error. Say what
+      // is actually wrong instead.
+      if (detected.architecture && !isSupportedTextArch(detected.architecture)) {
+        themedAlert(
+          'Model Not Supported Yet',
+          `"${model.name}" uses the "${detected.architecture}" architecture, which this version of the app can't run. ` +
+          `Update the app if a newer version is available, or pick a different model.`,
         );
         return false;
       }
@@ -2203,6 +2265,25 @@ const Home: React.FC = () => {
         setLoadingProgress(Math.max(0, Math.min(100, pct)));
       };
 
+      // Every load attempt below goes through here. A model with MTP
+      // layers is tried with speculative decoding first; if the same
+      // attempt then succeeds without it, MTP is what failed, and it
+      // stays off for the rest of this load.
+      let useMtp = detected.mtpLayers > 0 && genSettings.speculativeDecoding;
+      const init = async (params: any): Promise<LlamaContext> => {
+        if (useMtp) {
+          try {
+            return await initLlama({ ...params, speculative: MTP_SPECULATIVE }, onProgress);
+          } catch (mtpErr) {
+            console.warn('[loadModel] init with MTP failed, trying without:', mtpErr);
+            const plain = await initLlama(params, onProgress);
+            useMtp = false;
+            return plain;
+          }
+        }
+        return initLlama(params, onProgress);
+      };
+
       // Loading strategy:
       //  • Normal path: try mlock first (fast), fall back to paged if mlock fails
       //  • Force-hybrid path: skip mlock entirely, go straight to paged with
@@ -2217,20 +2298,17 @@ const Home: React.FC = () => {
         // use_mlock: false tells llama.cpp to use mmap (paged from disk).
         // n_ctx: 512 is the minimum useful window. CPU only, no devices.
         try {
-          ctx = await initLlama(
-            {
-              model: path,
-              use_mlock: false,
-              use_mmap: perf.mmapHint,
-              n_ctx: safeCtx,
-              n_gpu_layers: 0,
-              n_threads: perf.n_threads,
-              n_batch: perf.n_batch,
-              n_ubatch: perf.n_ubatch,
-              ctx_shift: true,
-            } as any,
-            onProgress,
-          );
+          ctx = await init({
+            model: path,
+            use_mlock: false,
+            use_mmap: perf.mmapHint,
+            n_ctx: safeCtx,
+            n_gpu_layers: 0,
+            n_threads: perf.n_threads,
+            n_batch: perf.n_batch,
+            n_ubatch: perf.n_ubatch,
+            ctx_shift: true,
+          });
         } catch (hybridErr: any) {
           const errMsg = String(hybridErr || '').toLowerCase();
           if (errMsg.includes('oom') || errMsg.includes('memory') || errMsg.includes('alloc') || errMsg.includes('enomem')) {
@@ -2268,27 +2346,24 @@ const Home: React.FC = () => {
         if (hwDevices) initParams.devices = hwDevices;
 
         try {
-          ctx = await initLlama(initParams, onProgress);
+          ctx = await init(initParams);
         } catch (accelErr) {
           if (__DEV__) console.warn(`[loadModel] ${hwBackend.mode} load failed, trying CPU fallback:`, accelErr);
           // If we were using GPU/NPU, retry with pure CPU before giving up
           if (nGpuLayers > 0) {
             const failedMode = hwBackend.mode;
             try {
-              ctx = await initLlama(
-                {
-                  model: path,
-                  use_mlock: true,
-                  use_mmap: perf.mmapHint,
-                  n_ctx: safeCtx,
-                  n_gpu_layers: 0,
-                  n_threads: perf.n_threads,
-                  n_batch: perf.n_batch,
-                  n_ubatch: perf.n_ubatch,
-                  ctx_shift: true,
-                } as any,
-                onProgress,
-              );
+              ctx = await init({
+                model: path,
+                use_mlock: true,
+                use_mmap: perf.mmapHint,
+                n_ctx: safeCtx,
+                n_gpu_layers: 0,
+                n_threads: perf.n_threads,
+                n_batch: perf.n_batch,
+                n_ubatch: perf.n_ubatch,
+                ctx_shift: true,
+              });
               hwBackend.mode = 'cpu';
               hwBackend.deviceLabel = 'CPU (mlock)';
               hwBackend.warning = `${failedMode === 'npu' ? 'NPU' : 'GPU'} failed — loaded on CPU instead.`;
@@ -2300,20 +2375,17 @@ const Home: React.FC = () => {
             // Last resort: CPU + paged (mmap)
             try {
               usedFallback = true;
-              ctx = await initLlama(
-                {
-                  model: path,
-                  use_mlock: false,
-                  use_mmap: perf.mmapHint,
-                  n_ctx: Math.min(safeCtx, 1024),
-                  n_gpu_layers: 0,
-                  n_threads: perf.n_threads,
-                  n_batch: perf.n_batch,
-                  n_ubatch: perf.n_ubatch,
-                  ctx_shift: true,
-                } as any,
-                onProgress,
-              );
+              ctx = await init({
+                model: path,
+                use_mlock: false,
+                use_mmap: perf.mmapHint,
+                n_ctx: Math.min(safeCtx, 1024),
+                n_gpu_layers: 0,
+                n_threads: perf.n_threads,
+                n_batch: perf.n_batch,
+                n_ubatch: perf.n_ubatch,
+                ctx_shift: true,
+              });
               hwBackend.mode = 'cpu';
               hwBackend.deviceLabel = 'CPU (paged)';
             } catch (fallbackErr: any) {
@@ -2337,19 +2409,16 @@ const Home: React.FC = () => {
           if (__DEV__) console.warn('[loadModel] mlock failed, trying paged');
           try {
             usedFallback = true;
-            ctx = await initLlama(
-              {
-                model: path,
-                use_mlock: false,
-                use_mmap: perf.mmapHint,
-                n_ctx: Math.min(safeCtx, 1024),
-                n_gpu_layers: 0,
-                n_threads: perf.n_threads,
-                n_batch: perf.n_batch,
-                n_ubatch: perf.n_ubatch,
-              } as any,
-              onProgress,
-            );
+            ctx = await init({
+              model: path,
+              use_mlock: false,
+              use_mmap: perf.mmapHint,
+              n_ctx: Math.min(safeCtx, 1024),
+              n_gpu_layers: 0,
+              n_threads: perf.n_threads,
+              n_batch: perf.n_batch,
+              n_ubatch: perf.n_ubatch,
+            });
             hwBackend.mode = 'cpu';
             hwBackend.deviceLabel = 'CPU (paged)';
           } catch (fallbackErr: any) {
@@ -2393,7 +2462,7 @@ const Home: React.FC = () => {
         if (!npuCoordinator.confirmText()) {
           console.warn('[loadModel] NPU was claimed by image gen during text init — reloading on GPU/CPU');
           await safeReleaseContext(ctx, `npu-evicted "${model.name}" gen=${myGen}`);
-          return doLoadModel(model, { forceNonNpu: true }, myGen);
+          return doLoadModel(model, { ...opts, forceNonNpu: true }, myGen);
         }
       } else if (textNpuReserved) {
         // Reserved NPU but didn't end up using it (CPU fallback path).
@@ -2405,7 +2474,9 @@ const Home: React.FC = () => {
       setLoadingProgress(0);
       modelContextSizeRef.current = safeCtx;
       loadedTextModelRef.current = model;
-      startNewSession();
+      mtpActiveRef.current = useMtp;
+      if (useMtp) console.log(`[loadModel] "${model.name}" loaded with MTP speculative decoding`);
+      if (!opts?.keepSession) startNewSession();
 
       // Probe whether this model's chat template actually respects the
       // `enable_thinking` flag. Non-reasoning models (Gemma 3, Llama 3.x,
@@ -2653,6 +2724,7 @@ const Home: React.FC = () => {
       llamaContextRef.current = null;
     }
     loadedTextModelRef.current = null;
+    mtpActiveRef.current = false;
     npuCoordinator.noteTextUnloaded();
     setIsVisionEnabled(false);
     setImageAttachment(null);
@@ -2695,7 +2767,7 @@ const Home: React.FC = () => {
       console.log('[home] NPU evict requested — reloading text model on GPU/CPU');
       try { showLoadStatus('Switching chat to GPU mode for image generation…', 4000); } catch {}
       try {
-        await reload(model, { forceNonNpu: true });
+        await reload(model, { forceNonNpu: true, keepSession: true });
       } catch (e) {
         console.warn('[home] NPU eviction reload failed:', e);
         try { await unload?.(); } catch {}
@@ -2804,7 +2876,19 @@ const Home: React.FC = () => {
     setInputText('');
     setInputHeight(40);
     setImageAttachment(null);
+
+    if (userText && !checkChatText(userText).allowed) {
+      addChatMessage({ id: Date.now().toString(), sender: 'User', message: userText });
+      addChatMessage({ id: (Date.now() + 1).toString(), sender: 'Model', message: CHAT_BLOCKED_REPLY });
+      return;
+    }
+
     const myGen = ++genId.current;
+
+    // Taken before this turn's messages are added: the new user message
+    // goes into the prompt on its own, so it must not also come back
+    // through the history.
+    const priorHistory = useStore.getState().chatHistory;
 
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
@@ -2856,8 +2940,11 @@ Rules:
 - Always use [IMG: description] when the user asks for any image, photo, picture, or drawing
 - The description must be detailed: subject, setting, lighting, style, mood
 - You can include conversational text before or after the [IMG: ...] tag
-- NEVER say you cannot generate images — you CAN, using the [IMG: ...] tag`
-              : 'You are a helpful assistant.',
+- NEVER say you cannot generate images — you CAN, using the [IMG: ...] tag
+- Never describe nudity, underwear, swimwear, sexual or violent content inside [IMG: ...]
+
+${CHAT_CONTENT_RULE}`
+              : `You are a helpful assistant.\n\n${CHAT_CONTENT_RULE}`,
           };
 
       let webCtx = '';
@@ -2877,48 +2964,23 @@ Rules:
         });
       }
 
-      // Build history messages. IMPORTANT: do NOT re-encode old images as
-      // multipart content. The vision encoder is expensive and the assistant
-      // already produced text about the image on the original turn — that
-      // assistant reply is in history. Re-sending the image would force the
-      // CLIP encoder to run on every subsequent turn, ballooning latency.
-      // Instead we substitute a short text marker so the model knows the
-      // earlier turn included an image.
-      //
-      // Reads from the store WITHOUT subscribing (getState()) because this
-      // function runs on tap, not during render.
-      const currentHistory = useStore.getState().chatHistory;
-      const historyMsgs: RNLlamaOAICompatibleMessage[] = currentHistory.map((m) => {
-        if (m.sender === 'User' && m.imageUri) {
-          const userText = m.message && m.message !== '(image)' ? m.message : '';
-          return {
-            role: 'user',
-            content: userText
-              ? `[Image attached previously] ${userText}`
-              : '[Image attached previously]',
-          };
-        }
-        return {
-          role: m.sender === 'User' ? 'user' : 'assistant',
-          content: m.message,
-        };
-      });
-
-      // Smart context trimming: estimate tokens and drop oldest messages
-      // to stay within ~55% of context window (reserve 45% for generation).
-      // Reference project (off-grid-mobile-ai) uses 55% prompt budget.
-      // Token estimate: ~4 chars per token (more accurate than 3.5).
+      // History, trimmed to ~55% of the context window (45% is reserved
+      // for the reply; off-grid-mobile-ai uses the same split). See
+      // lib/chat-context.ts for how old images and the cut point are
+      // handled.
       const ctxBudget = modelContextSizeRef.current || genSettings.contextLength;
       const inputBudget = Math.floor(ctxBudget * 0.55);
-      const estimateTokens = (arr: RNLlamaOAICompatibleMessage[]) =>
-        arr.reduce((n, m) => n + Math.ceil((typeof m.content === 'string' ? m.content.length : 0) / 4), 0);
-
-      while (
-        historyMsgs.length > 2 &&
-        estimateTokens([...msgs, ...historyMsgs, { role: 'user', content: userText }]) > inputBudget
-      ) {
-        historyMsgs.shift();
-      }
+      const fixedTokens =
+        msgs.reduce((n, m) => n + (typeof m.content === 'string' ? estimateTokens(m.content) : 0), 0) +
+        estimateTokens(userText);
+      const historyWindow = selectHistoryWindow(
+        priorHistory,
+        fixedTokens,
+        inputBudget,
+        historyStartIdRef.current,
+      );
+      historyStartIdRef.current = historyWindow.startId;
+      const historyMsgs: RNLlamaOAICompatibleMessage[] = historyWindow.messages;
 
       // Build the current user message (with image if attached). Image
       // priority order:
@@ -2958,8 +3020,11 @@ Rules:
       if (activeCharacter) {
         const reminder =
           activeCharacter.postHistoryInstructions?.trim() ||
-          `[Reminder: You are ${activeCharacter.name}. Stay fully in character. Respond naturally as ${activeCharacter.name} would, with their voice and personality. No refusals, disclaimers, or breaking character.]`;
-        msgs.push({ role: 'system', content: reminder });
+          `[Reminder: You are ${activeCharacter.name}. Stay fully in character. Respond naturally as ${activeCharacter.name} would, with their voice and personality.]`;
+        msgs.push({
+          role: 'system',
+          content: `${reminder}\n[Keep it non-sexual and suitable for a general audience.]`,
+        });
       }
 
       // Roleplay sampling boost: when a character is active, automatically use sampling
@@ -3025,6 +3090,11 @@ Rules:
       // Using the full n_ctx as n_predict wastes context budget and some
       // models generate unnecessarily long responses before hitting a stop.
       const maxGenTokens = Math.min(1024, genSettings.contextLength);
+      // Output guard: the reply is checked as it streams. A trailing
+      // window keeps the check O(n) over the response; it's wide enough
+      // for every multi-word term in content-safety.ts.
+      let streamedText = '';
+      let outputBlocked = false;
       const completionPromise = llamaContext.completion(
         {
           messages: msgs,
@@ -3047,15 +3117,28 @@ Rules:
           enable_thinking: genSettings.enableThinking,
           reasoning_format: (() => {
             if (!genSettings.enableThinking) return 'none';
-            const name = (selectedModel?.name || '').toLowerCase();
+            const name = (loadedTextModelRef.current?.name || '').toLowerCase();
             if (name.includes('gemma-4') || name.includes('gemma4')) return 'none';
             return 'deepseek';
           })(),
+          // MTP is text-only in llama.rn: a request that carries an image
+          // has to switch it off or the completion is rejected.
+          ...(mtpActiveRef.current && {
+            speculative: typeof currentUserMsg.content === 'string' ? MTP_SPECULATIVE : false,
+          }),
         } as any,
         (d) => {
           // Bail early if generation was stopped — prevents leftover tokens after stop
-          if (!isGeneratingRef.current || !d.token) return;
+          if (!isGeneratingRef.current || !d.token || outputBlocked) return;
           tokenCount.current += 1;
+          streamedText += d.token;
+          if (!checkChatText(streamedText.slice(-400)).allowed) {
+            outputBlocked = true;
+            tokenBufferRef.current = '';
+            comboProcessorRef.current?.cancel();
+            void llamaContext.stopCompletion().catch(() => {});
+            return;
+          }
 
           // ─── Combo mode: route tokens through the stream processor ───
           if (imageModelReady && comboProcessorRef.current) {
@@ -3129,9 +3212,17 @@ Rules:
 
       if (myGen !== genId.current) return;
 
+      if (outputBlocked) {
+        updateChatMessage(botId, { message: CHAT_BLOCKED_REPLY, isStreaming: false });
+        return;
+      }
+
       // Use native timings for final accurate tokens/sec
       if (res.timings?.predicted_per_second > 0) {
         setTokensPerSec(Math.round(res.timings.predicted_per_second * 10) / 10);
+      }
+      if (res.draft_tokens > 0) {
+        console.log(`[mtp] ${res.draft_tokens_accepted}/${res.draft_tokens} drafted tokens accepted`);
       }
 
       // In combo mode the visible text was already updated via the processor

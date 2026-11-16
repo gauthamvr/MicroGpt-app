@@ -13,6 +13,7 @@ import { useColorScheme } from 'react-native';
 import { ThemedAlertProvider } from '@/components/ThemedAlert';
 import { SupabaseAuthProvider } from '@/lib/supabase';
 import { installLogCapture } from '@/lib/log-store';
+import { flushPendingReports } from '@/lib/content-report';
 
 // Tee console.log/warn/error into a small in-memory ring buffer so
 // the user can share recent app output via Settings → View Logs.
@@ -42,6 +43,10 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [loaded]);
+
+  useEffect(() => {
+    void flushPendingReports();
+  }, []);
 
   if (!loaded) return null;
 

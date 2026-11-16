@@ -106,9 +106,28 @@ const injectedJavaScript = `
     if (modelId === lastModelId) return;
     lastModelId = modelId;
 
-    fetch('https://huggingface.co/api/models/' + modelId + '/tree/main')
-      .then(r => r.json())
+    // Repos HuggingFace tags "not-for-all-audiences", or whose name says
+    // they're adult models, are never offered for download.
+    var explicitName = /(^|[^a-z])(nsfw|porn|hentai|nude|nudity|naked|xxx|lewd|erotic|sex|onlyfans)([^a-z]|$)/i;
+    var blockedByName = explicitName.test(modelId);
+    (blockedByName
+      ? Promise.resolve({ tags: [] })
+      : fetch('https://huggingface.co/api/models/' + modelId).then(r => r.json()))
+      .then(info => {
+        var tags = (info && Array.isArray(info.tags)) ? info.tags : [];
+        if (blockedByName || tags.indexOf('not-for-all-audiences') !== -1) {
+          postList([]);
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'restrictedModel',
+            modelId: modelId,
+          }));
+          return null;
+        }
+        return fetch('https://huggingface.co/api/models/' + modelId + '/tree/main')
+          .then(r => r.json());
+      })
       .then(files => {
+        if (files === null) return;
         if (!Array.isArray(files)) {
           postList([]);
           return;
@@ -359,6 +378,11 @@ export default function Explore() {
           }
         });
         setGgufItems(Object.values(uniqueMap));
+      } else if (data.type === 'restrictedModel') {
+        themedAlert(
+          'Not available',
+          `"${String(data.modelId || 'This model')}" is marked as adult content, so it can't be downloaded in MicroGPT.`,
+        );
       } else if (data.type === 'hfNativeDownloadIntercept') {
         // User tapped HuggingFace's own download arrow. Their browser
         // would normally start a system download — landing the file in

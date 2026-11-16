@@ -36,6 +36,8 @@ import { getModelsDir } from '@/lib/storage-paths';
 import { themedAlert } from '@/components/ThemedAlert';
 import { useStore, Model } from '@/store';
 import * as ImageGenService from '@/lib/image-gen-service';
+import { isContentBlocked } from '@/lib/content-safety';
+import { promptReport } from '@/lib/content-report';
 
 type Props = {
   model: Model;
@@ -242,6 +244,11 @@ const ImageGenerationView: React.FC<Props> = ({ model }) => {
       }
     } catch (err: any) {
       const msg = err?.message ?? 'Unknown error';
+      if (isContentBlocked(err)) {
+        console.log(`[ImageGen] Blocked by content filter (${err.category})`);
+        if (!genCancelled.current) themedAlert('Not allowed', msg);
+        return;
+      }
       console.error('[ImageGen] GENERATION FAILED:', msg);
       if (!genCancelled.current) {
         themedAlert('Generation failed', msg);
@@ -302,6 +309,13 @@ const ImageGenerationView: React.FC<Props> = ({ model }) => {
       themedAlert('Save failed', err?.message ?? 'Could not save image.');
     }
   }, [result]);
+
+  const handleReport = useCallback(() => {
+    promptReport(
+      { contentType: 'image', modelName: model.name, prompt: lastPrompt },
+      () => setResult(null),
+    );
+  }, [model.name, lastPrompt]);
 
   // ─── Render helpers ─────────────────────────────────────────────
   const renderLoadingState = () => {
@@ -606,6 +620,24 @@ const ImageGenerationView: React.FC<Props> = ({ model }) => {
         >
           <Ionicons name="share-outline" size={18} color={textColor} />
           <Text style={{ color: textColor, marginLeft: 6, fontWeight: '600' }}>Share</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleReport}
+          accessibilityLabel="Report image"
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingVertical: 12,
+            borderRadius: 12,
+            backgroundColor: cardBg,
+            borderWidth: 1,
+            borderColor,
+          }}
+        >
+          <Ionicons name="flag-outline" size={18} color={textColor} />
+          <Text style={{ color: textColor, marginLeft: 6, fontWeight: '600' }}>Report</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>

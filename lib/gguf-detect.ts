@@ -31,108 +31,23 @@
 
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type { ModelType } from '@/store';
+import { LLAMA_CPP_ARCHS } from './llama-archs.generated';
 
 /** Bytes read from the head of the GGUF file. 512 KB is a safe ceiling —
  *  `general.architecture` typically lands within the first 100 bytes. */
 const HEADER_READ_BYTES = 512 * 1024;
 
 /**
- * Known text LLM architectures written into the GGUF `general.architecture`
- * key by llama.cpp's conversion scripts. If we see one of these, we know
- * it's a text (or vision, via mmproj) LLM and llama.rn will load it.
- *
- * This list is not exhaustive — it's refreshed whenever a new popular
- * architecture lands in llama.cpp. A model whose architecture isn't in
- * this set will be classified as 'imageGen' *if* its architecture matches
- * the image-gen list, otherwise we fall back to a filename heuristic.
+ * Text LLM architectures: every `general.architecture` value the bundled
+ * llama.cpp can load. Generated from the installed llama.rn (see
+ * scripts/gen-llama-archs.js) so it can't drift from the engine.
  */
-const TEXT_LLM_ARCHS = new Set<string>([
-  'llama',
-  'llama4',
-  'mistral',
-  'mixtral',
-  'qwen',
-  'qwen2',
-  'qwen2moe',
-  'qwen2vl',
-  'qwen3',
-  'qwen3moe',
-  'qwen3vl',
-  'phi',
-  'phi2',
-  'phi3',
-  'phi4',
-  'phimoe',
-  'gemma',
-  'gemma2',
-  'gemma3',
-  'gemma3n',
-  'gemma4',
-  'deepseek',
-  'deepseek2',
-  'deepseek3',
-  'stablelm',
-  'command-r',
-  'command_r',
-  'cohere',
-  'cohere2',
-  'baichuan',
-  'yi',
-  'internlm',
-  'internlm2',
-  'internlm3',
-  'internvl',
-  'starcoder',
-  'starcoder2',
-  'falcon',
-  'bloom',
-  'mpt',
-  'gpt2',
-  'gptj',
-  'gptneox',
-  'refact',
-  't5',
-  'nemotron',
-  'minicpm',
-  'minicpm3',
-  'minicpm4',
-  'grok',
-  'arctic',
-  'jais',
-  'bitnet',
-  'rwkv6',
-  'rwkv7',
-  'mamba',
-  'mamba2',
-  'exaone',
-  'olmo',
-  'olmo2',
-  'olmoe',
-  'granite',
-  'granitemoe',
-  'chameleon',
-  'bailingmoe',
-  'orion',
-  'openelm',
-  'xverse',
-  'plamo',
-  'plamo2',
-  'smollm',
-  'smollm2',
-  'smollm3',
-  'hunyuan',
-  'hunyuanmoe',
-  'glm',
-  'glm4',
-  'chatglm',
-  'ernie',
-  'ernie4',
-  'dots1',
-  'nomic-bert',
-  'bert',
-  'jina-bert',
-  'clip-vit',
-]);
+const TEXT_LLM_ARCHS = new Set<string>(LLAMA_CPP_ARCHS);
+
+/** True when the bundled llama.cpp can load this `general.architecture`. */
+export function isSupportedTextArch(architecture: string): boolean {
+  return TEXT_LLM_ARCHS.has(architecture.toLowerCase());
+}
 
 /**
  * Known image generation architectures. stable-diffusion.cpp's converter
@@ -334,6 +249,12 @@ export type GgufDetectionResult = {
   modelType: ModelType | null;
   /** Source of the classification — useful for debugging. */
   source: 'gguf-arch' | 'gguf-arch-heuristic' | 'parse-failed';
+  /**
+   * Number of multi-token-prediction (MTP / NextN) layers in the file, from
+   * `<arch>.nextn_predict_layers`. 0 when the model has none. A positive
+   * value means llama.rn can run MTP speculative decoding on it.
+   */
+  mtpLayers: number;
 };
 
 /**
@@ -347,20 +268,20 @@ export async function detectGgufModelType(
   try {
     const bytes = await readFileHeader(filePath);
     if (!bytes || bytes.length < 24) {
-      return { architecture: null, modelType: null, source: 'parse-failed' };
+      return { architecture: null, modelType: null, source: 'parse-failed', mtpLayers: 0 };
     }
-    const arch = parseArchitecture(bytes);
+    const { architecture: arch, mtpLayers } = parseHeader(bytes);
     if (!arch) {
-      return { architecture: null, modelType: null, source: 'parse-failed' };
+      return { architecture: null, modelType: null, source: 'parse-failed', mtpLayers: 0 };
     }
     const lower = arch.toLowerCase();
 
     // Strict match first — the arch key was set by a converter we know about
     if (TEXT_LLM_ARCHS.has(lower)) {
-      return { architecture: arch, modelType: 'text', source: 'gguf-arch' };
+      return { architecture: arch, modelType: 'text', source: 'gguf-arch', mtpLayers };
     }
     if (IMAGE_GEN_ARCHS.has(lower)) {
-      return { architecture: arch, modelType: 'imageGen', source: 'gguf-arch' };
+      return { architecture: arch, modelType: 'imageGen', source: 'gguf-arch', mtpLayers: 0 };
     }
 
     // Heuristic fallback on unknown archs. If the arch string *looks* like
@@ -380,17 +301,18 @@ export async function detectGgufModelType(
         architecture: arch,
         modelType: 'imageGen',
         source: 'gguf-arch-heuristic',
+        mtpLayers: 0,
       };
     }
 
     // Unknown arch that isn't obviously diffusion — bet on text.
-    return { architecture: arch, modelType: 'text', source: 'gguf-arch-heuristic' };
+    return { architecture: arch, modelType: 'text', source: 'gguf-arch-heuristic', mtpLayers };
   } catch (err) {
     if (__DEV__) {
       // eslint-disable-next-line no-console
       console.warn('[gguf-detect] failed to classify', filePath, err);
     }
-    return { architecture: null, modelType: null, source: 'parse-failed' };
+    return { architecture: null, modelType: null, source: 'parse-failed', mtpLayers: 0 };
   }
 }
 
@@ -486,15 +408,17 @@ const GGUF_VT_INT64 = 11;
 const GGUF_VT_FLOAT64 = 12;
 
 /**
- * Walk the GGUF metadata block until we find the `general.architecture`
- * key, and return its string value. Returns null if:
- *   - magic bytes are wrong (not a GGUF file)
- *   - file is truncated mid-header
- *   - architecture key never appears within the read window
- *   - any value is malformed
+ * Walk the GGUF metadata block and pull out `general.architecture` and
+ * `<arch>.nextn_predict_layers`. Stops at the first `tokenizer.*` key:
+ * converters write the general and architecture keys before the
+ * tokenizer, whose vocabulary arrays run past the read window anyway.
+ * Whatever was found before a truncated or malformed value is returned;
+ * `architecture` stays null if the file isn't a GGUF or the key never
+ * appears within the read window.
  */
-function parseArchitecture(bytes: Uint8Array): string | null {
-  if (bytes.length < 24) return null;
+export function parseHeader(bytes: Uint8Array): { architecture: string | null; mtpLayers: number } {
+  const result = { architecture: null as string | null, mtpLayers: 0 };
+  if (bytes.length < 24) return result;
   // Magic: 'GGUF' = 0x47 0x47 0x55 0x46
   if (
     bytes[0] !== 0x47 ||
@@ -502,7 +426,7 @@ function parseArchitecture(bytes: Uint8Array): string | null {
     bytes[2] !== 0x55 ||
     bytes[3] !== 0x46
   ) {
-    return null;
+    return result;
   }
 
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -511,7 +435,7 @@ function parseArchitecture(bytes: Uint8Array): string | null {
   // Version (uint32 LE)
   const version = dv.getUint32(pos, true);
   pos += 4;
-  if (version < 1 || version > 16) return null; // sanity guard
+  if (version < 1 || version > 16) return result; // sanity guard
 
   // v1: tensor_count + kv_count are uint32
   // v2+: both are uint64
@@ -529,25 +453,38 @@ function parseArchitecture(bytes: Uint8Array): string | null {
   // Walk KV pairs. We give up at the first read beyond our buffer.
   for (let i = 0; i < kvCount; i++) {
     const keyRead = readString(bytes, dv, pos);
-    if (!keyRead) return null;
+    if (!keyRead) return result;
     pos = keyRead.next;
+    if (keyRead.value.startsWith('tokenizer.')) return result;
 
-    if (pos + 4 > bytes.length) return null;
+    if (pos + 4 > bytes.length) return result;
     const valueType = dv.getUint32(pos, true);
     pos += 4;
 
     if (keyRead.value === 'general.architecture') {
-      if (valueType !== GGUF_VT_STRING) return null;
+      if (valueType !== GGUF_VT_STRING) return result;
       const valRead = readString(bytes, dv, pos);
-      return valRead ? valRead.value : null;
+      if (!valRead) return result;
+      result.architecture = valRead.value;
+      pos = valRead.next;
+      continue;
+    }
+
+    if (keyRead.value.endsWith('.nextn_predict_layers')) {
+      if (
+        (valueType === GGUF_VT_UINT32 || valueType === GGUF_VT_INT32) &&
+        pos + 4 <= bytes.length
+      ) {
+        result.mtpLayers = Math.max(0, dv.getInt32(pos, true));
+      }
     }
 
     const skipped = skipValue(bytes, dv, pos, valueType);
-    if (skipped === null) return null;
+    if (skipped === null) return result;
     pos = skipped;
   }
 
-  return null;
+  return result;
 }
 
 function readU64AsNumber(dv: DataView, pos: number): number {

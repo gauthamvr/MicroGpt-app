@@ -1,0 +1,18 @@
+On-device NSFW classifiers used by NsfwFilter.kt. Each was converted to
+float16 TFLite from the upstream release below; weights are unchanged.
+
+opennsfw2.tflite
+  Source: https://github.com/bhky/opennsfw2 (weights from yahoo/open_nsfw)
+  opennsfw2: MIT License, Copyright (c) 2021 Bosco Yung
+  open_nsfw model and weights: BSD 2-Clause License, Copyright 2016 Yahoo Inc.
+
+nsfw_mobilenet_v2.tflite
+  Source: https://github.com/GantMan/nsfw_model release 1.2.0
+          (mobilenet_v2_140_224)
+  MIT License, Copyright (c) 2020 The nsfw_model Developers
+
+nsfw_vit_marqo.tflite
+  Source: https://huggingface.co/Marqo/nsfw-image-detection-384
+  Apache License 2.0 (see LICENSE-APACHE-2.0.txt), Copyright Marqo.
+  Modified: the timm ViT-tiny graph was re-expressed in TensorFlow and
+  converted to float16 TFLite with a softmax output.

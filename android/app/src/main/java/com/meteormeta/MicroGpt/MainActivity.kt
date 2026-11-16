@@ -1,4 +1,4 @@
-package com.anonymous.MicroGpt
+package com.meteormeta.MicroGpt
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

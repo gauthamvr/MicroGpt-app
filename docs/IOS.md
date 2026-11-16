@@ -64,7 +64,7 @@ it's `MANAGED` (prebuild). So:
 
 ### 2.1 Apple account / credentials
 Your Apple account is logged into EAS, so credentials are automatic. The
-bundle identifier is **`com.anonymous.MicroGpt`** (matches the Android
+bundle identifier is **`com.meteormeta.MicroGpt`** (matches the Android
 `package`). The first `eas build -p ios` will offer to create the
 distribution certificate + provisioning profile / register the bundle id —
 say yes.
@@ -82,7 +82,7 @@ eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID --valu
 ### 2.3 Google Sign-In on iOS (optional — email auth works without it)
 iOS needs its **own** Google OAuth client (the web client id won't work for
 the native iOS flow). In Google Cloud Console → Credentials → Create OAuth
-client → **iOS**, bundle id `com.anonymous.MicroGpt`. It gives you the id in
+client → **iOS**, bundle id `com.meteormeta.MicroGpt`. It gives you the id in
 two forms; set both as secrets:
 
 ```powershell

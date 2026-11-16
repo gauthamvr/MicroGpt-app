@@ -6,12 +6,6 @@
 // which meant every field was reset on app restart. Users asked for the
 // settings to persist so every chat (and every character activation) follows
 // the same configuration without re-setting them each session.
-//
-// The `forceFullRam` field intentionally stays session-only — it's a safety
-// override the user may flip "for this session only" when trying a tight
-// model. Resetting on restart prevents it from sticking and causing OOM
-// crashes on the next cold boot. The partialize() in store/index.ts excludes
-// it from the persisted blob.
 
 import { Platform } from 'react-native';
 
@@ -56,8 +50,6 @@ export type GenSettings = {
   topP: number;
   webContextChars: number;
   autocloseWebView: boolean;
-  /** Session-only — intentionally NOT persisted (see partialize in store/index.ts) */
-  forceFullRam: boolean;
   enableThinking: boolean;
   hardwareAcceleration: HardwareAccelMode;
   characterGreeting: CharacterGreetingMode;
@@ -85,6 +77,14 @@ export type GenSettings = {
    * cleared after one use so it never re-encodes on subsequent turns.
    */
   feedGeneratedImageToVision: boolean;
+  /**
+   * Use MTP speculative decoding on models that carry multi-token-
+   * prediction layers (e.g. the Qwen3.5 "MTP" builds). Read when a model
+   * loads. Default OFF: on CPU it measured about 6x slower than plain
+   * decoding (Qwen3.5-0.8B-MTP, x86_64 emulator, llama.rn 0.12.9) and it
+   * reprocesses the prompt on every turn. Not measured on GPU or NPU.
+   */
+  speculativeDecoding: boolean;
 };
 
 export interface GenSettingsSlice {
@@ -103,7 +103,6 @@ export const defaultGenSettings: GenSettings = {
   topP: 0.95,
   webContextChars: 300,
   autocloseWebView: true,
-  forceFullRam: false,
   // Default OFF for fast roleplay responses. User can enable for Qwen3 /
   // DeepSeek-R1 / GLM-4.5 / Gemma 4 style reasoning models.
   enableThinking: false,
@@ -115,6 +114,7 @@ export const defaultGenSettings: GenSettings = {
   comboImageNegativePrompt: 'blurry, low quality, distorted, deformed, ugly, bad anatomy',
   autoLoadLastModel: false,
   feedGeneratedImageToVision: true,
+  speculativeDecoding: false,
 };
 
 const createGenSettingsSlice = (set: any, _get: any): GenSettingsSlice => ({

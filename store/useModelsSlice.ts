@@ -8,6 +8,7 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import { detectGgufModelType } from '@/lib/gguf-detect';
 import { getModelsDir, getLegacyModelsDir } from '@/lib/storage-paths';
 import { IOS_COREML_MODELS, downloadCoreMLModel } from '@/lib/coreml-models';
+import { refreshBuiltInModels } from '@/lib/catalog-merge';
 
 // ────────────────────────────────────────────────────────────────
 //  Native download module availability probe
@@ -678,8 +679,8 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     mmProjUrl: 'https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/mmproj-SmolVLM-256M-Instruct-f16.gguf',
     description: 'Smallest vision model. Understands images on any device',
     source: 'builtIn',
-    size: '167 MB',
-    mmProjSize: '181 MB',
+    size: '175 MB',
+    mmProjSize: '190 MB',
   },
   {
     name: 'Qwen3-VL-2B-Vision',
@@ -687,8 +688,8 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     mmProjUrl: 'https://huggingface.co/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-F16.gguf',
     description: 'Qwen 3 vision-language. Strong image reasoning at tiny size',
     source: 'builtIn',
-    size: '1.03 GB',
-    mmProjSize: '781 MB',
+    size: '1.11 GB',
+    mmProjSize: '819 MB',
   },
   {
     name: 'Qwen3-VL-4B-Vision',
@@ -696,8 +697,8 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     mmProjUrl: 'https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-F16.gguf',
     description: 'Best mid-tier VLM of 2026. Sharp spatial reasoning & OCR',
     source: 'builtIn',
-    size: '2.33 GB',
-    mmProjSize: '781 MB',
+    size: '2.50 GB',
+    mmProjSize: '836 MB',
   },
   {
     name: 'Gemma-4-E2B-Vision',
@@ -724,8 +725,8 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     mmProjUrl: 'https://huggingface.co/openbmb/MiniCPM-V-4_5-gguf/resolve/main/mmproj-model-f16.gguf',
     description: 'GPT-4o-class vision at 8B. Video understanding. 12GB+ RAM',
     source: 'builtIn',
-    size: '4.68 GB',
-    mmProjSize: '1.02 GB',
+    size: '5.03 GB',
+    mmProjSize: '1.10 GB',
   },
 
   /* ═══════ TEXT: ULTRA-LIGHT (< 600MB) — 4GB RAM ═══════ */
@@ -736,7 +737,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf',
     description: 'Latest Qwen 3.5, 201 languages. Best quality at tiny size',
     source: 'builtIn',
-    size: '508 MB',
+    size: '533 MB',
   },
 
   /* ═══════ TEXT: LIGHT (600MB - 1.5GB) — 6GB RAM ═══════ */
@@ -746,21 +747,21 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf',
     description: 'Latest Qwen 3.5, best general model under 1.5 GB. 256K context',
     source: 'builtIn',
-    size: '1.19 GB',
+    size: '1.28 GB',
   },
   {
     name: 'Qwen3-1.7B',
     url: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf',
     description: 'Qwen 3, 119 languages. Matches Qwen2.5-3B quality',
     source: 'builtIn',
-    size: '1.03 GB',
+    size: '1.11 GB',
   },
   {
     name: 'Gemma-3-1B',
     url: 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf',
     description: 'Google Gemma 3, strong multilingual and reasoning',
     source: 'builtIn',
-    size: '769 MB',
+    size: '806 MB',
   },
 
   /* ═══════ TEXT: MEDIUM (1.5 - 2.5GB) — 8GB RAM ═══════ */
@@ -769,14 +770,14 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf',
     description: 'Mistral edge model. Best agent/tool-use under 3B',
     source: 'builtIn',
-    size: '2.00 GB',
+    size: '2.15 GB',
   },
   {
     name: 'Phi-4-mini',
     url: 'https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf',
     description: 'Microsoft Phi-4 mini, exceptional at STEM and coding',
     source: 'builtIn',
-    size: '2.38 GB',
+    size: '2.49 GB',
   },
   {
     // Visible chain-of-thought. Not recommended for roleplay — leaks
@@ -792,7 +793,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/main/SmolLM3-Q4_K_M.gguf',
     description: 'HuggingFace SmolLM3. 128K context, dual-mode reasoning',
     source: 'builtIn',
-    size: '1.78 GB',
+    size: '1.92 GB',
   },
 
   /* ═══════ TEXT: LARGE (2.5 - 4GB) — 12GB+ RAM ═══════ */
@@ -802,14 +803,14 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
     description: 'Latest Qwen 3.5, best overall text model at 4B. 256K context',
     source: 'builtIn',
-    size: '2.55 GB',
+    size: '2.74 GB',
   },
   {
     name: 'Gemma-3-4B',
     url: 'https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf',
     description: 'Google Gemma 3 4B, excellent conversational quality',
     source: 'builtIn',
-    size: '2.81 GB',
+    size: '2.49 GB',
   },
   {
     // Gemma-3n has vision architecture but llama.cpp currently treats
@@ -818,7 +819,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_K_M.gguf',
     description: 'Google Gemma 3n text-only. 2B memory, higher performance',
     source: 'builtIn',
-    size: '2.82 GB',
+    size: '3.03 GB',
   },
 
   /* ═══════ TEXT: FLAGSHIP (> 4 GB) — 12GB+ RAM ═══════ */
@@ -827,14 +828,14 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/unsloth/Ministral-3-8B-Instruct-2512-GGUF/resolve/main/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf',
     description: 'Mistral 8B edge. Strong agentic & function-calling. 12GB+ RAM',
     source: 'builtIn',
-    size: '4.84 GB',
+    size: '5.20 GB',
   },
   {
     name: 'Qwen3.5-9B',
     url: 'https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf',
     description: 'Qwen 3.5 9B, desktop-class quality. 256K ctx. 16GB+ RAM',
     source: 'builtIn',
-    size: '5.29 GB',
+    size: '5.68 GB',
   },
 
   /* ═══════ IMAGE GENERATION — FAST (MNN format, GPU/NPU) ═══════
@@ -849,7 +850,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/xororz/sd-mnn/resolve/main/AbsoluteReality.zip',
     description: 'Photorealistic. GPU accelerated, ~15-30s generation',
     source: 'builtIn',
-    size: '1.1 GB',
+    size: '1.19 GB',
     modelType: 'imageGen',
   },
   {
@@ -857,31 +858,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/xororz/sd-mnn/resolve/main/AnythingV5.zip',
     description: 'Anime/illustration. GPU accelerated, ~15-30s generation',
     source: 'builtIn',
-    size: '1.1 GB',
-    modelType: 'imageGen',
-  },
-  {
-    name: 'ChilloutMix-MNN',
-    url: 'https://huggingface.co/xororz/sd-mnn/resolve/main/ChilloutMix.zip',
-    description: 'Realistic portraits. GPU accelerated, ~15-30s generation',
-    source: 'builtIn',
-    size: '1.1 GB',
-    modelType: 'imageGen',
-  },
-  {
-    name: 'CuteYukiMix-MNN',
-    url: 'https://huggingface.co/xororz/sd-mnn/resolve/main/CuteYukiMix.zip',
-    description: 'Cute anime style. GPU accelerated, ~15-30s generation',
-    source: 'builtIn',
-    size: '1.1 GB',
-    modelType: 'imageGen',
-  },
-  {
-    name: 'QteaMix-MNN',
-    url: 'https://huggingface.co/xororz/sd-mnn/resolve/main/QteaMix.zip',
-    description: 'High quality mix. GPU accelerated, ~15-30s generation',
-    source: 'builtIn',
-    size: '1.1 GB',
+    size: '1.19 GB',
     modelType: 'imageGen',
   },
 
@@ -894,19 +871,11 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
    * see these rows (DownloadModel filters them via `npuSupported`).
    * ═══════════════════════════════════════════════════════════════════ */
   {
-    name: 'RealisticVisionHyper-NPU',
-    url: 'https://huggingface.co/xororz/sd-qnn/resolve/main/RealisticVisionHyper_qnn2.28_min.zip',
-    description: 'Photoreal people, Hyper 4-step. NPU ~5s. Snapdragon only',
-    source: 'builtIn',
-    size: '1.0 GB',
-    modelType: 'imageGen',
-  },
-  {
     name: 'DreamShaperV8-NPU',
     url: 'https://huggingface.co/xororz/sd-qnn/resolve/main/DreamShaperV8_qnn2.28_min.zip',
     description: 'Creative versatile. NPU accelerated, ~5-15s. Snapdragon only',
     source: 'builtIn',
-    size: '1.0 GB',
+    size: '1.15 GB',
     modelType: 'imageGen',
   },
   {
@@ -914,15 +883,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/xororz/sd-qnn/resolve/main/AbsoluteReality_qnn2.28_min.zip',
     description: 'Photorealistic. NPU accelerated, ~5-15s. Snapdragon only',
     source: 'builtIn',
-    size: '947 MB',
-    modelType: 'imageGen',
-  },
-  {
-    name: 'MajicmixRealisticV7-NPU',
-    url: 'https://huggingface.co/xororz/sd-qnn/resolve/main/MajicmixRealisticV7_qnn2.28_min.zip',
-    description: 'Asian-portrait realism, newer than ChilloutMix. NPU ~5-15s. Snapdragon only',
-    source: 'builtIn',
-    size: '1.0 GB',
+    size: '993 MB',
     modelType: 'imageGen',
   },
   {
@@ -930,7 +891,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/xororz/sd-qnn/resolve/main/AnythingV5_qnn2.28_min.zip',
     description: 'Anime/illustration. NPU accelerated, ~5-15s. Snapdragon only',
     source: 'builtIn',
-    size: '1.0 GB',
+    size: '995 MB',
     modelType: 'imageGen',
   },
 
@@ -940,14 +901,6 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
    * but support ANY model format: GGUF, safetensors, ckpt. Also support
    * newer architectures: SDXL, SD3, Flux — not just SD 1.5.
    * ═══════════════════════════════════════════════════════════════════ */
-  {
-    name: 'RealisticVision-V6',
-    url: 'https://huggingface.co/second-state/Realistic_Vision_V6.0_B1-GGUF/resolve/main/realisticVisionV60B1_v51HyperVAE-Q4_0.gguf',
-    description: 'Photorealistic, Hyper 4-step capable. CPU, GGUF Q4',
-    source: 'builtIn',
-    size: '1.57 GB',
-    modelType: 'imageGen',
-  },
   {
     name: 'SD-1.5-Q8',
     url: 'https://huggingface.co/second-state/stable-diffusion-v1-5-GGUF/resolve/main/stable-diffusion-v1-5-pruned-emaonly-Q8_0.gguf',
@@ -961,7 +914,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/Lykon/DreamShaper/resolve/main/DreamShaper_8_pruned.safetensors',
     description: 'Versatile creative style. CPU, safetensors',
     source: 'builtIn',
-    size: '2.0 GB',
+    size: '2.13 GB',
     modelType: 'imageGen',
   },
   {
@@ -977,7 +930,7 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     url: 'https://huggingface.co/Meina/MeinaMix/resolve/main/MeinaPastel%20-%20baked%20VAE.safetensors',
     description: 'Anime/pastel style, baked VAE. CPU, safetensors',
     source: 'builtIn',
-    size: '2.0 GB',
+    size: '2.13 GB',
     modelType: 'imageGen',
   },
   {
@@ -986,14 +939,6 @@ const DEFAULT_BUILTIN_MODELS: Model[] = [
     description: 'SDXL base, native 1024px output, sharper detail than SD 1.5. CPU, GGUF Q8, slower',
     source: 'builtIn',
     size: '4.18 GB',
-    modelType: 'imageGen',
-  },
-  {
-    name: 'SD3-Medium-Q4',
-    url: 'https://huggingface.co/second-state/stable-diffusion-3-medium-GGUF/resolve/main/sd3-medium-Q4_0.gguf',
-    description: 'SD3 Medium, MMDiT architecture, strong prompt adherence. CPU, GGUF Q4, slower',
-    source: 'builtIn',
-    size: '4.55 GB',
     modelType: 'imageGen',
   },
 ];
@@ -1035,19 +980,21 @@ function finishDownload(set: any, get: any, modelName: string) {
   });
 }
 
+// The built-in catalog for this platform. iOS can't run the Android-format
+// image-gen models (gguf / MNN / NPU) — its image engine is Core ML with a
+// separate catalog — so hide them to avoid users downloading multi-GB files
+// that won't load. Vision LLMs (multimodal text models) are NOT image-gen
+// models and stay visible. Android gets the full catalog.
+const BUILTIN_CATALOG: Model[] =
+  Platform.OS === 'ios'
+    ? [
+        ...DEFAULT_BUILTIN_MODELS.filter((m) => !isImageGenModel(m)),
+        ...IOS_COREML_MODELS,
+      ]
+    : DEFAULT_BUILTIN_MODELS;
+
 const createModelsSlice = (set: any, get: any): ModelsSlice => ({
-  // iOS can't run the Android-format image-gen models (gguf / MNN / NPU) —
-  // its image engine is Core ML with a separate catalog — so hide them to
-  // avoid users downloading multi-GB files that won't load. Vision LLMs
-  // (multimodal text models) are NOT image-gen models and stay visible.
-  // Android resolves to the full catalog exactly as before.
-  models:
-    Platform.OS === 'ios'
-      ? [
-          ...DEFAULT_BUILTIN_MODELS.filter((m) => !isImageGenModel(m)),
-          ...IOS_COREML_MODELS,
-        ]
-      : [...DEFAULT_BUILTIN_MODELS],
+  models: [...BUILTIN_CATALOG],
 
   downloadedModels: [],
   selectedModel: null,
@@ -1157,11 +1104,12 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
         downloadDir,
         `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/Downloads`,
       ];
+      // The saved list comes from whichever app version wrote it; bring
+      // its built-in entries up to this version's catalog first, so the
+      // size check below compares against current sizes.
+      const mergedModels = refreshBuiltInModels(get().models, BUILTIN_CATALOG);
       const catalogByName = new Map<string, Model>();
-      for (const m of get().models) catalogByName.set(m.name, m);
-      for (const m of DEFAULT_BUILTIN_MODELS) {
-        if (!catalogByName.has(m.name)) catalogByName.set(m.name, m);
-      }
+      for (const m of mergedModels) catalogByName.set(m.name, m);
       for (const dir of scanDirs) {
         try {
           const dirEx = await ReactNativeBlobUtil.fs.isDir(dir);
@@ -1226,15 +1174,6 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
         _activeDownloadTasks: {},
         _activeDownloadPollers: {},
       });
-
-      // Merge built-in models
-      const currentModels = get().models;
-      const mergedModels = [...currentModels];
-      for (const defModel of DEFAULT_BUILTIN_MODELS) {
-        if (!mergedModels.some((m) => m.name === defModel.name)) {
-          mergedModels.push(defModel);
-        }
-      }
 
       // Re-create model entries for downloaded files that aren't in the models array
       // (e.g. HuggingFace models lost during store migration/upgrade).
@@ -1664,8 +1603,8 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
           downloadedModels: s.downloadedModels.includes(model.name)
             ? s.downloadedModels
             : [...s.downloadedModels, model.name],
-          selectedModel: { ...model, modelType: 'imageGen' as ModelType },
         }));
+        get().selectModel({ ...model, modelType: 'imageGen' as ModelType });
         finishDownload(set, get, model.name);
         showDownloadCompleteNotification(model.name);
       } catch (err: any) {
@@ -1717,14 +1656,14 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
             if (mmComplete) {
               await get().rescanDownloadedModels();
               themedAlert('Already Downloaded', `${model.name} is already on device.`);
-              set({ selectedModel: model });
+              get().selectModel(model);
               return;
             }
             mmProjOnly = true;
           } else {
             await get().rescanDownloadedModels();
             themedAlert('Already Downloaded', `${model.name} is already on device.`);
-            set({ selectedModel: model });
+            get().selectModel(model);
             return;
           }
         }
@@ -1736,7 +1675,7 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
         if (dirExists) {
           await get().rescanDownloadedModels();
           themedAlert('Already Downloaded', `${model.name} is already on device.`);
-          set({ selectedModel: model });
+          get().selectModel(model);
           return;
         }
       }
@@ -2391,15 +2330,8 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
         }
       } catch {}
 
-      // Update store — keep the original description if it's meaningful
-      const state = get();
+      // Keep the original description if it's meaningful
       const finalDescription = model.description || 'Downloaded from Hugging Face';
-      const updatedModels = state.models.filter((m: Model) => m.name !== model.name);
-      updatedModels.push({
-        ...model,
-        description: finalDescription,
-        modelType: resolvedModelType,
-      });
 
       // If this is a .zip model (MNN format), unzip it to a directory
       // named after the model. The zip typically contains a folder with
@@ -2515,19 +2447,26 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
       // We must add the directory name to downloadedModels so the UI and
       // rescan logic can find it. For non-ZIP models the file stays as-is.
       const downloadedEntry = modelFile.endsWith('.zip') ? model.name : modelFile;
+      const downloadedModel = {
+        ...model,
+        description: finalDescription,
+        modelType: resolvedModelType,
+      };
+      // Built from the state at this moment, not from a snapshot taken
+      // before the unzip: another download can finish while this one is
+      // extracting, and its entries must survive.
       set((s: any) => ({
-        models: updatedModels,
+        models: [...s.models.filter((m: Model) => m.name !== model.name), downloadedModel],
         // Dedupe — on mmProjOnly resume the entry is already in the list
         // from the original main download.
-        downloadedModels: state.downloadedModels.includes(downloadedEntry)
-          ? state.downloadedModels
-          : [...state.downloadedModels, downloadedEntry],
-        selectedModel: {
-          ...model,
-          description: finalDescription,
-          modelType: resolvedModelType,
-        },
+        downloadedModels: s.downloadedModels.includes(downloadedEntry)
+          ? s.downloadedModels
+          : [...s.downloadedModels, downloadedEntry],
       }));
+      // Through selectModel, not a bare `selectedModel`: in combo mode the
+      // chat and image loaders watch their own slots, and a model set only
+      // as `selectedModel` shows in the header but never loads.
+      get().selectModel(downloadedModel);
       // Remove this model from the active set + clean up ALL download
       // state (progress, phase, stats, pollers). finishDownload now
       // deletes downloadProgress and downloadPhase entries so no stale
@@ -2608,7 +2547,7 @@ const createModelsSlice = (set: any, get: any): ModelsSlice => ({
       }
       const downloadDir = getDownloadDir();
       // Delete all possible file extensions for this model
-      for (const ext of ['.gguf', '.safetensors', '.ckpt']) {
+      for (const ext of ['.gguf', '.safetensors', '.ckpt', '.zip']) {
         await ReactNativeBlobUtil.fs.unlink(`${downloadDir}/${modelName}${ext}.part`).catch(() => {});
         await ReactNativeBlobUtil.fs.unlink(`${downloadDir}/${modelName}${ext}`).catch(() => {});
       }

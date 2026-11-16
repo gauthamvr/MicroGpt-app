@@ -1,6 +1,8 @@
 // lib/chub-api.ts
 // Chub.ai API client + format converter for MicroGPT characters
 
+import { checkCharacterText } from './content-safety';
+
 const CHUB_API = 'https://api.chub.ai';
 
 export type ChubSearchResult = {
@@ -48,10 +50,27 @@ export async function searchChubCharacters(
   const res = await fetch(`${CHUB_API}/search?${params.toString()}`);
   if (!res.ok) throw new Error(`Chub search failed: ${res.status}`);
   const json = await res.json();
+  const nodes: ChubSearchResult[] = json.data?.nodes || [];
   return {
-    nodes: json.data?.nodes || [],
+    nodes: nodes.filter(isSafeCharacter),
     totalCount: json.data?.count || 0,
   };
+}
+
+// Chub's nsfw=false relies on creators tagging their own cards, so
+// results are screened again here on topics and visible text.
+const ADULT_TOPICS = new Set([
+  'nsfw', 'nsfl', 'lewd', 'smut', 'erotic', 'erotica', 'sexual', 'sex',
+  'fetish', 'kink', 'kinky', 'hentai', 'porn', 'ntr', 'netorare', 'breeding',
+  'futa', 'futanari', 'bdsm', 'incest', 'loli', 'shota', 'nude', 'naked',
+]);
+
+function isSafeCharacter(node: ChubSearchResult): boolean {
+  if ((node.topics || []).some((t) => ADULT_TOPICS.has(t.trim().toLowerCase()))) {
+    return false;
+  }
+  const text = [node.name, node.tagline, node.description].filter(Boolean).join('\n');
+  return checkCharacterText(text).allowed;
 }
 
 /**

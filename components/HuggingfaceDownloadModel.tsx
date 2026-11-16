@@ -87,6 +87,20 @@ function parseFileSizeString(sizeString: string): number {
 }
 
 /**
+ * Name a listed file is stored under. MNN and QNN bundles get the same
+ * `-MNN` / `-NPU` suffix as the built-in catalog. The rest of the app keys
+ * on it (an NPU model is locked to 512×512 and takes the Hexagon DSP over
+ * from the chat model), and without it the two bundles of one model would
+ * unpack into the same folder.
+ */
+function modelNameFor(item: GgufItem): string {
+  const base = item.fileName.replace(/\.(gguf|safetensors|ckpt|zip)$/i, '');
+  if (item.fileType === 'npu') return `${base}-NPU`;
+  if (item.fileType === 'gpu') return `${base}-MNN`;
+  return base;
+}
+
+/**
  * Matches one part of a gguf-split model, e.g. "model-00001-of-00003.gguf".
  * HuggingFace ships quants this large (typically 45 GB+ per set) only for
  * models far beyond phone hardware; llama.cpp needs EVERY part present to
@@ -230,11 +244,11 @@ function sortGgufItems(
   }
   // (d) downloaded first
   const downloaded = modelFiles.filter((i) => {
-    const baseName = i.fileName.replace(/\.(gguf|safetensors|ckpt|zip)$/i, '');
+    const baseName = modelNameFor(i);
     return downloadedModels.includes(i.fileName) || downloadedModels.includes(baseName);
   });
   const notDownloaded = modelFiles.filter((i) => {
-    const baseName = i.fileName.replace(/\.(gguf|safetensors|ckpt|zip)$/i, '');
+    const baseName = modelNameFor(i);
     return !downloadedModels.includes(i.fileName) && !downloadedModels.includes(baseName);
   });
   return [...downloaded, ...notDownloaded];
@@ -493,7 +507,7 @@ export default function HuggingfaceDownloadModel({
 
   // Download handler — detects model type from fileType badge or filename
   const doDownload = (item: GgufItem) => {
-    const modelName = item.fileName.replace(/\.(gguf|safetensors|ckpt|zip)$/i, '');
+    const modelName = modelNameFor(item);
     const ft = item.fileType || '';
     const isImageGen = ft === 'gpu' || ft === 'npu' || ft === 'imagegen-cpu'
       || detectImageGenFromFilename(modelName);
@@ -536,19 +550,17 @@ export default function HuggingfaceDownloadModel({
 
   // Cancel
   const handleCancel = (item: GgufItem) => {
-    const modelName = item.fileName.replace('.gguf', '');
-    cancelDownload(modelName);
+    cancelDownload(modelNameFor(item));
   };
 
   // Delete
   const handleDelete = (item: GgufItem) => {
-    const modelName = item.fileName.replace('.gguf', '');
-    deleteModel(modelName);
+    deleteModel(modelNameFor(item));
   };
 
   // Use Model
   const handleUseModel = (item: GgufItem) => {
-    const modelName = item.fileName.replace(/\.(gguf|safetensors|ckpt|zip)$/i, '');
+    const modelName = modelNameFor(item);
     const ft = item.fileType || '';
     const isImageGen = ft === 'gpu' || ft === 'npu' || ft === 'imagegen-cpu'
       || detectImageGenFromFilename(modelName);
@@ -588,7 +600,7 @@ export default function HuggingfaceDownloadModel({
     const ratioIconColor = getIconColorByRatio(ratio);
 
     // States — handle all extensions
-    const modelName = item.fileName.replace(/\.(gguf|safetensors|ckpt|zip)$/i, '');
+    const modelName = modelNameFor(item);
     const isDownloaded = downloadedModels.includes(item.fileName)
       || downloadedModels.includes(modelName); // MNN dirs stored as bare name
     const isDownloadingThisOne =

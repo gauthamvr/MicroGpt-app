@@ -16,6 +16,7 @@ native image-generation binaries.
 |---|---|
 | Android test APK (installable) | `eas build --platform android --profile preview` |
 | Android Play Store bundle | `eas build --platform android --profile production` |
+| Android Play Store bundle + upload to Play | `eas build --platform android --profile production --auto-submit` |
 | iOS test build (direct install link) | *(set iOS env vars, then)* `eas build --platform ios --profile test` |
 | iOS TestFlight / App Store | *(set iOS env vars, then)* `eas build --platform ios --profile production` |
 
@@ -41,6 +42,32 @@ Queue it and don't block the terminal:
 ```powershell
 eas build --platform android --profile preview --non-interactive --no-wait
 ```
+
+### Auto-submit to Google Play
+
+`--auto-submit` hands the finished `.aab` to EAS Submit, which uploads it
+using the `production` submit profile in `eas.json`:
+
+```powershell
+eas build --platform android --profile production --auto-submit --non-interactive --no-wait
+
+# Or submit a build that already finished:
+eas submit --platform android --latest
+```
+
+The upload lands as a **draft release on the closed testing track
+(`alpha`)**. Nothing goes to review or to testers until you open Play
+Console -> Test and release -> Closed testing, review the draft, and send it
+for review. Google only allows draft releases while the app has never been
+published; once it is, `releaseStatus` can be switched to `completed`.
+
+Play auth is a Google Cloud service account with the Google Play Android
+Developer API enabled in its project. In Play Console, invite its email
+with app-level access to your app (edit draft apps, release to
+production/testing tracks, manage testing tracks), then upload its JSON key
+to EAS (expo.dev -> your project -> Credentials -> Android -> your package
+-> *Google service account key for EAS Submit*). Keep any local copy of the
+key **outside the repository**.
 
 ---
 
